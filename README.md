@@ -103,6 +103,17 @@
 스키마·질의 예시는 [`docs/ONTOLOGY.md`](docs/ONTOLOGY.md) 참조. RDF Turtle과 Neo4j Cypher로도
 제공한다.
 
+**지식그래프 보는 법** — 목적에 따라 셋 중 하나를 쓰면 된다.
+
+| 방법 | 준비 | 쓸모 |
+|---|---|---|
+| **`kg_explorer.html`** | 없음. 파일을 브라우저로 열면 끝 | 역 클릭 → 그 역의 KG 관계·취약성 확인. 발표·시연용 |
+| **Neo4j** | Neo4j Desktop 설치 후 `kg/kg_import.cypher` 실행 | Cypher 질의로 임의 패턴 탐색 |
+| **Gephi** | Gephi 설치 후 `kg/knowledge_graph.graphml` 열기 | 레이아웃·군집 시각화 |
+
+`kg_explorer.html`은 `python make_explorer.py`로 언제든 다시 만들 수 있다(데이터가 파일 안에
+그대로 들어가므로 인터넷·서버 없이 동작).
+
 ### 분석
 1. **중심성**: 연결·매개·근접·고유벡터 (거리 가중)
 2. **단일 역사 제거 전수 스윕**: 791개 역을 하나씩 제거하며 전역 효율·최대연결요소 변화 실측
