@@ -295,6 +295,116 @@ def fig_edges(k=12):
     plt.close(fig); print("saved fig6")
 
 
+# ------------------------------------------------------------------ fig 7
+def fig_criticality():
+    """구조적 취약성 × 실수요 교차 — 우선 보강 대상 도출"""
+    import os
+    p = RES + "criticality_metro.csv"
+    if not os.path.exists(p):
+        print("skip fig7 (실수요 분석 결과 없음)"); return
+    d = pd.read_csv(p)
+    qd = d["일평균승하차"].quantile(0.75)
+    qi = d["실수요가중_저하율_%"].quantile(0.75)
+
+    fig, ax = plt.subplots(figsize=(9.4, 6.4))
+    fig.patch.set_facecolor(SURFACE); ax.set_facecolor(SURFACE)
+    ax.axvline(qd, color=INK3, lw=0.9, ls=":")
+    ax.axhline(qi, color=INK3, lw=0.9, ls=":")
+
+    for is_art, lab, c, z in [(0, "일반 역사", "#c9c8c1" if True else CAT[2], 2),
+                              (1, "절점(제거 시 망 분리)", CAT[1], 3)]:
+        s = d[d["절점"] == is_art]
+        ax.scatter(s["일평균승하차"], s["실수요가중_저하율_%"], s=26, c=c,
+                   edgecolors=SURFACE, linewidths=0.4, label=lab, zorder=z, alpha=0.9)
+
+    pri_all = d[d["우선보강"] == 1]
+    ax.scatter(pri_all["일평균승하차"], pri_all["실수요가중_저하율_%"], s=60,
+               facecolors="none", edgecolors=CAT[0], linewidths=1.6, zorder=4,
+               label=f"우선 보강 대상 ({len(pri_all)}개)")
+    # 라벨은 상위 8개만, 좌우 교대 배치로 충돌 방지
+    for k, (_, r) in enumerate(pri_all.nlargest(8, "실수요가중_저하율_%").iterrows()):
+        left = k % 2 == 1
+        ax.annotate(r["역사명"], (r["일평균승하차"], r["실수요가중_저하율_%"]),
+                    xytext=(-8 if left else 8, 5 if k % 4 < 2 else -11),
+                    textcoords="offset points", fontsize=7.8, color=INK,
+                    ha="right" if left else "left")
+
+    ax.set_xscale("log")
+    ax.set_xlabel("일평균 승하차 인원 (명, 로그 축)", color=INK2)
+    ax.set_ylabel("운영 중단 시 실수요가중 네트워크 효율 저하율 (%)", color=INK2)
+    ax.set_title("구조적 취약성 × 실제 수요 교차 분석 (수도권 791개 노드)\n"
+                 "두 축 모두 상위 25%이면서 절점인 19개 역이 우선 보강 대상",
+                 loc="left", color=INK)
+    ymax = d["실수요가중_저하율_%"].max()
+    ax.annotate("① 최우선  고수요·고영향", (qd * 1.15, ymax * 0.97), fontsize=9,
+                color=INK2, ha="left", va="top")
+    ax.annotate("② 구조 취약  저수요·고영향", (qd * 0.85, ymax * 0.97), fontsize=9,
+                color=INK3, ha="right", va="top")
+    ax.set_ylim(-0.25, ymax * 1.06)
+    ax.legend(loc="upper left", fontsize=8.5, labelcolor=INK2)
+    ax.grid(True, alpha=0.5, lw=0.5); ax.set_axisbelow(True)
+    fig.tight_layout(); fig.savefig(FIG + "fig7_criticality.png", facecolor=SURFACE)
+    plt.close(fig); print("saved fig7")
+
+
+# ------------------------------------------------------------------ fig 8
+def fig_topology():
+    """권역 위상 비교 — 순환밀도(위상적 여유)와 취약성의 관계"""
+    import os
+    p = RES + "topology_summary.csv"
+    if not os.path.exists(p):
+        print("skip fig8 (위상 요약 없음)"); return
+    d = pd.read_csv(p)
+    name = {"한국철도공사": "수도권", "부산광역시 부산교통공사": "부산·김해",
+            "대구교통공사": "대구", "대전교통공사": "대전", "광주교통공사": "광주"}
+    d["권역"] = d["권역대표기관"].map(lambda x: name.get(x, x))
+    d = d.sort_values("순환밀도", ascending=False)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.0, 4.8))
+    fig.patch.set_facecolor(SURFACE)
+
+    ax = axes[0]; ax.set_facecolor(SURFACE)
+    ax.plot(d["순환밀도"], d["절점비율_%"], color="#c9c8c1", lw=1.4, zorder=1)
+    ax.scatter(d["순환밀도"], d["절점비율_%"], s=110, c=CAT[0], zorder=3,
+               edgecolors=SURFACE, linewidths=1.0)
+    prev = None
+    for k, (_, r) in enumerate(d.iterrows()):
+        x, y = r["순환밀도"], r["절점비율_%"]
+        off = (9, -3)
+        if prev and abs(x - prev[0]) < 0.01 and abs(y - prev[1]) < 6:
+            off = (9, 26)          # 대전·광주처럼 겹치는 점은 위로 밀어 배치
+        ax.annotate(f"{r['권역']}\n({r['노드수']}노드)", (x, y),
+                    xytext=off, textcoords="offset points",
+                    fontsize=8.4, color=INK, va="top")
+        prev = (x, y)
+    ax.set_xlabel("순환밀도 (독립 순환 수 ÷ 노드 수)", color=INK2)
+    ax.set_ylabel("절점 비율 (%)", color=INK2)
+    ax.set_title("위상적 여유가 없을수록 절점이 많다", loc="left", color=INK)
+    ax.set_xlim(-0.015, d["순환밀도"].max() * 1.32)
+    ax.set_ylim(20, 100)
+    ax.grid(True, alpha=0.6, lw=0.5); ax.set_axisbelow(True)
+
+    ax = axes[1]; ax.set_facecolor(SURFACE)
+    dd = d.sort_values("다리비율_%")
+    y = np.arange(len(dd))
+    ax.barh(y, dd["다리비율_%"], height=0.6, color=CAT[0], zorder=2)
+    for yi, v, c in zip(y, dd["다리비율_%"], dd["순환수"]):
+        ax.text(v + 1.5, yi, f"{v:.0f}%   (순환 {c}개)", va="center",
+                fontsize=8.2, color=INK2)
+    ax.set_yticks(y); ax.set_yticklabels(dd["권역"], fontsize=9, color=INK)
+    ax.set_xlabel("다리(끊기면 망이 분리되는 구간) 비율 (%)", color=INK2)
+    ax.set_title("대전·광주는 순환이 0 — 모든 구간이 다리", loc="left", color=INK)
+    ax.set_xlim(0, 132)
+    ax.grid(True, axis="x", alpha=0.6, lw=0.5); ax.set_axisbelow(True)
+    ax.spines["left"].set_color("#b8b7b0")
+
+    fig.suptitle("권역별 네트워크 위상 비교 — 동일 방법론으로 구축한 5개 권역",
+                 x=0.008, y=0.985, ha="left", color=INK, fontsize=11.5)
+    fig.tight_layout(rect=[0, 0, 1, 0.9])
+    fig.savefig(FIG + "fig8_topology.png", facecolor=SURFACE)
+    plt.close(fig); print("saved fig8")
+
+
 if __name__ == "__main__":
     import os
     os.makedirs(FIG, exist_ok=True)
@@ -305,4 +415,6 @@ if __name__ == "__main__":
     fig_daejeon(G)
     fig_kg_scenarios()
     fig_edges()
+    fig_criticality()
+    fig_topology()
     print("완료 →", FIG)
