@@ -42,7 +42,13 @@
 않는다** — 중심성 지표만으로 핵심 역사를 판단하면 실제 취약점을 놓친다는 점이 본 연구의
 주요 발견이다.
 
-**5. 지식그래프 기반 계층적 장애 시나리오.** 역이 어느 노선·기관·지역에 속하는지를 타입
+**5. 취약 구간(선로 구간) — 949개 중 275개(29%)가 단절 유발 구간.**
+역이 아니라 **선로 구간**이 끊기는 상황(사고·공사)을 별도로 전수 분석했다.
+영향도 최상위는 도봉산–망월사(4.76%)·망월사–회룡(4.62%)으로, 경원선 북부의 단일 경로 구간이
+끊기면 의정부 이북이 통째로 분리된다. 통과 통행이 몰리는 병목 구간은 철산–가산디지털단지
+(구간 매개중심성 0.217) 등 **7호선 광명 구간**에 집중된다.
+
+**6. 지식그래프 기반 계층적 장애 시나리오.** 역이 어느 노선·기관·지역에 속하는지를 타입
 관계로 표현하면, 단일 그래프로는 표현조차 불가능한 **상위 계층 동시 장애**를 시뮬레이션할
 수 있다.
 
@@ -58,7 +64,7 @@
 역당 파급력(효율 저하 ÷ 제거 역수)으로 보면 **대구 3호선이 2.36으로 최고**, 수도권에서는
 2호선이 0.53으로 가장 높다.
 
-**6. 대전 사례**: 1호선 단일 노선 구조로, 중간부 역사(정부청사 31.6%, 갈마 31.4%,
+**7. 대전 사례**: 1호선 단일 노선 구조로, 중간부 역사(정부청사 31.6%, 갈마 31.4%,
 시청 31.2%) 중단 시 네트워크 효율이 약 31% 저하된다. 종단부(반석 3.0%, 판암 3.1%)와
 **10배 이상 차이**가 난다.
 
@@ -85,6 +91,9 @@
 
 ![kg](figures/fig5_kg_scenarios.png)
 **그림 5.** 지식그래프 기반 계층적 장애 시나리오
+
+![edges](figures/fig6_edges.png)
+**그림 6.** 취약 구간 — 구간 단절 영향도 및 통과 통행 병목
 
 ---
 
@@ -117,6 +126,7 @@
 ### 분석
 1. **중심성**: 연결·매개·근접·고유벡터 (거리 가중)
 2. **단일 역사 제거 전수 스윕**: 791개 역을 하나씩 제거하며 전역 효율·최대연결요소 변화 실측
+2-b. **구간(엣지) 제거 전수 스윕**: 949개 구간을 하나씩 끊어 취약 구간 도출 + 구간 매개중심성
 3. **순차 제거 시뮬레이션**: 무작위(10회 평균) vs 연결중심성 / 매개중심성 / 적응형(매 단계 재계산) 표적
 4. **계층적 장애 시나리오**: KG 타입 관계를 질의해 노선·운영기관·광역시도 단위 동시 중단
 5. **승객 이동 영향**: OD 데이터 부재를 **운행빈도 가중**으로 대체.
@@ -141,11 +151,49 @@
 pip install -r requirements.txt
 
 python build_graph.py    # 원본 → 물리 그래프 (data/processed/)
-python analyze.py        # 중심성·제거 시뮬레이션 (results/)
+python analyze.py        # 중심성·역/구간 제거 시뮬레이션 (results/)
 python build_kg.py       # 지식그래프 구축 (kg/)
 python kg_scenarios.py   # 계층적 장애 시나리오 (results/)
-python visualize.py      # 그림 5종 (figures/)
+python visualize.py      # 그림 6종 (figures/)
+python make_explorer.py  # 지식그래프 탐색기 HTML
 ```
+
+### 가상환경 (권장)
+
+**conda (Anaconda 사용 시)**
+
+```bash
+conda env create -f environment.yml
+conda activate raility
+python -m ipykernel install --user --name raility --display-name "Python 3 (raility)"
+jupyter lab
+```
+
+**venv (표준 파이썬)**
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate        # Windows  (macOS/Linux: source .venv/bin/activate)
+pip install -r requirements.txt
+pip install jupyterlab ipykernel
+python -m ipykernel install --user --name raility --display-name "Python 3 (raility)"
+jupyter lab
+```
+
+### 주피터 노트북
+
+스크립트 대신 셀 단위로 중간 결과를 보며 실행하려면 `notebooks/`를 쓴다.
+노트북은 위 모듈의 함수를 그대로 호출하므로 코드가 두 벌로 갈라지지 않는다.
+
+| 노트북 | 내용 |
+|---|---|
+| `01_데이터_그래프구축.ipynb` | 원본 훑어보기, 품질 이슈 확인, 그래프 구축 |
+| `02_취약성분석.ipynb` | 중심성, 역·구간 전수 스윕, 복원력 곡선 |
+| `03_지식그래프.ipynb` | KG 구축, KG 질의 예시, 계층적 장애 시나리오 |
+| `04_시각화.ipynb` | 그림 6종 인라인 표시, 탐색기 생성 |
+
+> 노트북은 저장소 루트 기준으로 동작한다(첫 셀이 `notebooks/`에서 열렸을 때 자동으로
+> 상위로 이동). 한글 그림 폰트는 Windows `Malgun Gothic`, macOS `AppleGothic`을 자동 선택한다.
 
 ## 저장소 구조
 
@@ -154,13 +202,17 @@ python visualize.py      # 그림 5종 (figures/)
 ├── analyze.py                중심성·제거 시뮬레이션·복원력 곡선
 ├── build_kg.py               지식그래프 구축 (CSV/GraphML/Turtle/Cypher)
 ├── kg_scenarios.py           KG 기반 계층적 장애 시나리오
-├── visualize.py              그림 5종 생성
+├── visualize.py              그림 6종 생성
+├── make_explorer.py          지식그래프 탐색기 HTML 생성
+├── make_notebooks.py         notebooks/ 생성
+├── environment.yml           conda 가상환경 정의
+├── notebooks/                주피터 노트북 4종
 ├── data/
 │   ├── raw/                  국가철도공단 표준데이터 + 역간거리 4종
 │   └── processed/            nodes.csv, edges_*.csv, network.graphml
 ├── kg/                       지식그래프 산출물
 ├── results/                  중심성·영향도·복원력·시나리오 CSV
-├── figures/                  그림 5종 (300 dpi)
+├── figures/                  그림 6종 (300 dpi)
 └── docs/
     ├── README_데이터.md       데이터 명세서 (출처·스키마·정제 결정·품질 이슈)
     └── ONTOLOGY.md           지식그래프 온톨로지·질의 예시
@@ -187,4 +239,5 @@ python visualize.py      # 그림 5종 (figures/)
 - 인천공항 자기부상철도(운행중단)는 고립 노드로 분석에서 제외
 - 실측 역간거리 미확보 권역(부산·대전·광주 등)은 직선거리 대체 (실측/직선 비율 중앙값 1.03)
 - 실제 OD가 아닌 운행빈도 프록시 사용 — 시간대별 수요 편차는 반영되지 않음
+- 재현성: 연결요소를 정렬해 실행 순서를 고정했고, 무작위 제거는 `SEED=42` 10회 평균
 - 계층 시나리오의 효율 저하율은 각 권역 네트워크 기준이므로 권역 간 절대 비교에는 주의

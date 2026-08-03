@@ -255,6 +255,46 @@ def fig_kg_scenarios():
     plt.close(fig); print("saved fig5")
 
 
+# ------------------------------------------------------------------ fig 6
+def fig_edges(k=12):
+    """취약 구간 — 구간(엣지) 제거 영향도 및 구간 매개중심성"""
+    import os
+    p = RES + "edge_removal_impact_metro.csv"
+    if not os.path.exists(p):
+        print("skip fig6 (구간 분석 결과 없음)"); return
+    d = pd.read_csv(p)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.6, 5.0))
+    fig.patch.set_facecolor(SURFACE)
+    panes = [(d.head(k).iloc[::-1], "승객가중효율저하율_%", "제거 시 승객가중 효율 저하율 (%)",
+              "구간 단절 시 영향도 상위", "%.2f%%"),
+             (d.nlargest(k, "구간매개중심성").iloc[::-1], "구간매개중심성",
+              "구간 매개중심성", "통과 통행 병목 구간 상위", "%.3f")]
+    for ax, (dd, col, xlab, ttl, fmt) in zip(axes, panes):
+        ax.set_facecolor(SURFACE)
+        y = np.arange(len(dd))
+        ax.barh(y, dd[col], height=0.62, color=CAT[0], zorder=2)
+        for yi, v, cut in zip(y, dd[col], dd["단절유발"]):
+            ax.text(v + dd[col].max() * 0.02, yi,
+                    (fmt % v) + ("  ⚠ 단절" if cut else ""),
+                    va="center", fontsize=7.6, color=INK2)
+        ax.set_yticks(y)
+        ax.set_yticklabels([f"{a} – {b}" for a, b in zip(dd["역A"], dd["역B"])],
+                           fontsize=7.8, color=INK)
+        ax.set_xlabel(xlab, color=INK2)
+        ax.set_title(ttl, loc="left", color=INK)
+        ax.set_xlim(0, dd[col].max() * 1.34)
+        ax.grid(True, axis="x", alpha=0.6, lw=0.5); ax.set_axisbelow(True)
+        ax.spines["left"].set_color("#b8b7b0")
+    n_cut = int(d["단절유발"].sum())
+    fig.suptitle(f"수도권 취약 구간\n전체 {len(d)}개 구간 중 {n_cut}개"
+                 f"({n_cut/len(d)*100:.0f}%)가 단절 유발 구간",
+                 x=0.008, y=0.99, ha="left", color=INK, fontsize=11.5)
+    fig.tight_layout(rect=[0, 0, 1, 0.87])
+    fig.savefig(FIG + "fig6_edges.png", facecolor=SURFACE)
+    plt.close(fig); print("saved fig6")
+
+
 if __name__ == "__main__":
     import os
     os.makedirs(FIG, exist_ok=True)
@@ -264,4 +304,5 @@ if __name__ == "__main__":
     fig_top_stations()
     fig_daejeon(G)
     fig_kg_scenarios()
+    fig_edges()
     print("완료 →", FIG)

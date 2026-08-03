@@ -74,20 +74,24 @@ class Net:
         if self.freq.sum() == 0:
             self.freq = np.ones(self.n)
 
-    def matrix(self, keep_mask=None):
+    def matrix(self, keep_mask=None, drop_edges=None):
+        """keep_mask=노드 마스크, drop_edges=제거할 엣지 인덱스(구간 제거 분석용)"""
+        esel = np.ones(self.ei.size, dtype=bool)
+        if drop_edges is not None:
+            esel[drop_edges] = False
         if keep_mask is None:
-            return csr_matrix(
-                (np.concatenate([self.ew, self.ew]),
-                 (np.concatenate([self.ei, self.ej]), np.concatenate([self.ej, self.ei]))),
-                shape=(self.n, self.n)), np.arange(self.n)
-        keep_idx = np.flatnonzero(keep_mask)
-        pos = np.full(self.n, -1, dtype=np.int64)
-        pos[keep_idx] = np.arange(keep_idx.size)
-        sel = keep_mask[self.ei] & keep_mask[self.ej]
-        a, b, w = pos[self.ei[sel]], pos[self.ej[sel]], self.ew[sel]
+            a, b, w = self.ei[esel], self.ej[esel], self.ew[esel]
+            keep_idx, size = np.arange(self.n), self.n
+        else:
+            keep_idx = np.flatnonzero(keep_mask)
+            pos = np.full(self.n, -1, dtype=np.int64)
+            pos[keep_idx] = np.arange(keep_idx.size)
+            esel &= keep_mask[self.ei] & keep_mask[self.ej]
+            a, b, w = pos[self.ei[esel]], pos[self.ej[esel]], self.ew[esel]
+            size = keep_idx.size
         m = csr_matrix((np.concatenate([w, w]),
                         (np.concatenate([a, b]), np.concatenate([b, a]))),
-                       shape=(keep_idx.size, keep_idx.size))
+                       shape=(size, size))
         return m, keep_idx
 
 
@@ -190,6 +194,42 @@ def single_removal_sweep(G, nodes):
     return df, {"E0": E0, "Ep0": Ep0, "S0": S0}
 
 
+# ------------------------------------------- 구간(엣지) 제거 영향도(전수 스윕)
+def edge_removal_sweep(G, nodes):
+    """각 구간을 하나씩 끊어 네트워크 효율·연결성 저하량을 실측 → 취약 구간 도출.
+    역(노드) 취약성과 별개로, 선로 사고·공사로 '구간'만 끊기는 상황에 대응한다."""
+    net = Net(G, nodes)
+    DU, DW = denom_unweighted(net.n), denom_weighted(net.freq)
+    mat, _ = net.matrix()
+    E0 = efficiency(mat, denom=DU)
+    Ep0 = efficiency(mat, weights=net.freq, denom=DW)
+    S0 = lcc_size(mat)
+
+    H = G.subgraph(net.nodes)
+    eb = nx.edge_betweenness_centrality(H, weight="w", normalized=True)
+
+    rows = []
+    for k in range(net.ei.size):
+        u, v = net.nodes[net.ei[k]], net.nodes[net.ej[k]]
+        m, _ = net.matrix(drop_edges=[k])
+        E = efficiency(m, denom=DU)
+        Ep = efficiency(m, weights=net.freq, denom=DW)
+        S = lcc_size(m)
+        d = G.edges[u, v]
+        rows.append({
+            "역A": G.nodes[u].get("역사명", ""), "노선A": G.nodes[u].get("노선명", ""),
+            "역B": G.nodes[v].get("역사명", ""), "노선B": G.nodes[v].get("노선명", ""),
+            "구간유형": d.get("type", ""),
+            "거리_m": d.get("거리_m", ""), "평일운행횟수": d.get("평일운행횟수", ""),
+            "구간매개중심성": round(eb.get((u, v), eb.get((v, u), 0.0)), 6),
+            "효율저하율_%": round((E0 - E) / E0 * 100, 4),
+            "승객가중효율저하율_%": round((Ep0 - Ep) / Ep0 * 100, 4),
+            "단절유발": int(S < S0),
+            "분리규모": int(S0 - S),
+        })
+    return pd.DataFrame(rows).sort_values("승객가중효율저하율_%", ascending=False)
+
+
 # ---------------------------------------------- 순차 제거(표적 vs 무작위)
 def removal_curve(G, nodes, strategy, frac=0.25, step=1, runs=1, net=None):
     """strategy: 'random' | 'degree' | 'betweenness' | 'adaptive'"""
@@ -258,7 +298,8 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     G = load_graph()
     comps = sorted(nx.connected_components(G), key=len, reverse=True)
-    metro = list(comps[0])                       # 최대 연결요소 = 수도권
+    # 연결요소는 set이라 순서가 실행마다 달라짐 → 정렬해 재현성 확보
+    metro = sorted(comps[0])                     # 최대 연결요소 = 수도권
     print(f"그래프: 노드 {G.number_of_nodes()} 엣지 {G.number_of_edges()} | 수도권 {len(metro)}")
 
     summary = {}
@@ -280,6 +321,17 @@ def main():
     print(imp.head(10)[["역사명", "노선명", "효율저하율_%", "승객가중효율저하율_%", "분리유발"]]
           .to_string(index=False))
     print("단절유발역 수:", int(imp["분리유발"].sum()))
+
+    # 2-b) 구간(엣지) 제거 전수 스윕 → 취약 구간
+    print("\n구간(엣지) 제거 전수 스윕 실행 중...")
+    eimp = edge_removal_sweep(G, metro)
+    eimp.to_csv(OUT + "edge_removal_impact_metro.csv", index=False, encoding="utf-8-sig")
+    print("[취약 구간 상위 10]")
+    print(eimp.head(10)[["역A", "역B", "구간유형", "효율저하율_%",
+                         "승객가중효율저하율_%", "단절유발"]].to_string(index=False))
+    print("단절유발 구간 수:", int(eimp["단절유발"].sum()), "/", len(eimp))
+    summary["취약구간_단절유발수"] = int(eimp["단절유발"].sum())
+    summary["취약구간_총수"] = len(eimp)
 
     # 3) 복원력 곡선
     print("\n복원력 곡선 계산 중...")
@@ -324,7 +376,7 @@ def main():
     for c in comps:
         ops = [G.nodes[n].get("운영기관", "") for n in c]
         if any("대전" in str(o) for o in ops):
-            daejeon = list(c); break
+            daejeon = sorted(c); break
     if daejeon:
         dj_imp, dj_base = single_removal_sweep(G, daejeon)
         dj_imp.to_csv(OUT + "single_removal_impact_daejeon.csv", index=False, encoding="utf-8-sig")
@@ -341,7 +393,7 @@ def main():
         if len(c) < 5:
             continue
         sub = G.subgraph(c)
-        m, _ = Net(G, list(c)).matrix()
+        m, _ = Net(G, sorted(c)).matrix()
         D = shortest_path(m, method="D", directed=False)
         finite = D[np.isfinite(D)]
         city_rows.append({
