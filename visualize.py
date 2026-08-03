@@ -220,6 +220,41 @@ def fig_daejeon(G):
     plt.close(fig); print("saved fig4")
 
 
+# ------------------------------------------------------------------ fig 5
+def fig_kg_scenarios():
+    """지식그래프 기반 계층적 장애 시나리오 (노선 단위 / 운영기관 단위)"""
+    import os
+    spec = [("results/kg_scenario_line.csv", 10, "노선 단위 통째 중단"),
+            ("results/kg_scenario_operator.csv", 8, "운영기관 전체 마비")]
+    if not all(os.path.exists(p) for p, _, _ in spec):
+        print("skip fig5 (시나리오 결과 없음)"); return
+
+    fig, axes = plt.subplots(1, 2, figsize=(11.4, 5.0))
+    fig.patch.set_facecolor(SURFACE)
+    for ax, (path, k, ttl) in zip(axes, spec):
+        d = pd.read_csv(path).head(k).iloc[::-1]
+        y = np.arange(len(d))
+        ax.set_facecolor(SURFACE)
+        ax.barh(y, d["효율저하율_%"], height=0.62, color=CAT[0], zorder=2)
+        for yi, v, n, a in zip(y, d["효율저하율_%"], d["제거역수"], d["권역"]):
+            ax.text(v + 1.0, yi, f"{v:.1f}%  ({n}역)", va="center",
+                    fontsize=7.6, color=INK2)
+        ax.set_yticks(y)
+        ax.set_yticklabels([f"{t}\n{a}" for t, a in zip(d["대상"], d["권역"])],
+                           fontsize=7.8, color=INK)
+        ax.set_xlabel("권역 네트워크 효율 저하율 (%)", color=INK2)
+        ax.set_title(ttl, loc="left", color=INK)
+        ax.set_xlim(0, min(118, d["효율저하율_%"].max() * 1.42))
+        ax.grid(True, axis="x", alpha=0.6, lw=0.5); ax.set_axisbelow(True)
+        ax.spines["left"].set_color("#b8b7b0")
+    fig.suptitle("지식그래프 기반 계층적 장애 시나리오\n"
+                 "타입 관계(ON_LINE / OPERATED_BY) 질의로만 가능한 상위 계층 동시 장애",
+                 x=0.008, y=0.99, ha="left", color=INK, fontsize=11.5)
+    fig.tight_layout(rect=[0, 0, 1, 0.87])
+    fig.savefig(FIG + "fig5_kg_scenarios.png", facecolor=SURFACE)
+    plt.close(fig); print("saved fig5")
+
+
 if __name__ == "__main__":
     import os
     os.makedirs(FIG, exist_ok=True)
@@ -228,4 +263,5 @@ if __name__ == "__main__":
     fig_resilience()
     fig_top_stations()
     fig_daejeon(G)
+    fig_kg_scenarios()
     print("완료 →", FIG)

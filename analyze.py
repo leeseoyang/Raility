@@ -91,8 +91,14 @@ class Net:
         return m, keep_idx
 
 
-def efficiency(mat, weights=None, unweighted=False):
-    """전역 효율. weights가 주어지면 승객가중(운행빈도 프록시) 효율."""
+def efficiency(mat, weights=None, unweighted=False, denom=None):
+    """전역 효율 E = (1/D) · Σ 1/d_ij.
+
+    denom을 원 네트워크 기준값으로 고정하면(제거 분석의 표준 관행) 제거된 역은
+    도달 불가로 0을 기여한다. denom을 주지 않으면 남은 노드로 재정규화되는데,
+    이 경우 종단부 역을 제거하면 평균 거리가 짧아져 효율이 '증가'하는 artifact가
+    생기므로, 제거 시뮬레이션에서는 반드시 denom을 고정해 호출한다.
+    """
     n = mat.shape[0]
     if n < 2:
         return 0.0
@@ -102,11 +108,21 @@ def efficiency(mat, weights=None, unweighted=False):
     inv[~np.isfinite(inv)] = 0.0
     np.fill_diagonal(inv, 0.0)
     if weights is None:
-        return float(inv.sum() / (n * (n - 1)))
+        den = denom if denom else (n * (n - 1))
+        return float(inv.sum() / den)
     w = np.asarray(weights, dtype=float)
     num = float(w @ inv @ w)
-    den = float(w.sum() ** 2 - (w ** 2).sum())
+    den = denom if denom else float(w.sum() ** 2 - (w ** 2).sum())
     return num / den if den > 0 else 0.0
+
+
+def denom_unweighted(n):
+    return n * (n - 1)
+
+
+def denom_weighted(w):
+    w = np.asarray(w, dtype=float)
+    return float(w.sum() ** 2 - (w ** 2).sum())
 
 
 def lcc_size(mat):
@@ -147,16 +163,17 @@ def single_removal_sweep(G, nodes):
     nodes = net.nodes
     freq_w = net.freq
     mat, _ = net.matrix()
-    E0 = efficiency(mat)
-    Ep0 = efficiency(mat, weights=freq_w)
+    DU, DW = denom_unweighted(net.n), denom_weighted(freq_w)
+    E0 = efficiency(mat, denom=DU)
+    Ep0 = efficiency(mat, weights=freq_w, denom=DW)
     S0 = lcc_size(mat)
 
     rows = []
     for i, node in enumerate(nodes):
         mask = np.ones(net.n, dtype=bool); mask[i] = False
         sub, keep = net.matrix(mask)
-        E = efficiency(sub)
-        Ep = efficiency(sub, weights=freq_w[keep])
+        E = efficiency(sub, denom=DU)
+        Ep = efficiency(sub, weights=freq_w[keep], denom=DW)
         S = lcc_size(sub)
         rows.append({
             "node_id": node,
@@ -180,7 +197,8 @@ def removal_curve(G, nodes, strategy, frac=0.25, step=1, runs=1, net=None):
     H = G.subgraph(net.nodes)
     n0, kmax = net.n, int(net.n * frac)
     mat0, _ = net.matrix()
-    E0, S0 = efficiency(mat0), lcc_size(mat0)
+    DU = denom_unweighted(net.n)
+    E0, S0 = efficiency(mat0, denom=DU), lcc_size(mat0)
 
     def one_run(seed):
         if strategy == "random":
@@ -221,7 +239,7 @@ def removal_curve(G, nodes, strategy, frac=0.25, step=1, runs=1, net=None):
                 "제거수": removed,
                 "제거비율": round(removed / n0, 4),
                 "LCC비율": round(lcc_size(m) / S0, 4),
-                "효율비율": round(efficiency(m) / E0, 4),
+                "효율비율": round(efficiency(m, denom=DU) / E0, 4),
             })
         return pd.DataFrame(rec)
 
@@ -282,7 +300,8 @@ def main():
     b = nx.betweenness_centrality(G.subgraph(metro), weight="w")
     top_tr = sorted(trans, key=lambda x: b.get(x, 0), reverse=True)
     mat, _ = net_metro.matrix()
-    E0, S0 = efficiency(mat), lcc_size(mat)
+    DU = denom_unweighted(net_metro.n)
+    E0, S0 = efficiency(mat, denom=DU), lcc_size(mat)
     rows = []
     for k in [1, 3, 5, 10, 15, 20, 30]:
         if k > len(top_tr):
@@ -290,7 +309,7 @@ def main():
         mask = np.ones(net_metro.n, dtype=bool)
         mask[[net_metro.idx[x] for x in top_tr[:k]]] = False
         m, _ = net_metro.matrix(mask)
-        e = efficiency(m) / E0
+        e = efficiency(m, denom=DU) / E0
         rows.append({"제거환승역수": k, "효율비율": round(e, 4),
                      "효율저하_%": round((1 - e) * 100, 2),
                      "LCC비율": round(lcc_size(m) / S0, 4)})
