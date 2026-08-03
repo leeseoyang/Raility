@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 로그/임시
+*.log
+.tmp/
+
+# 대용량 원본 (18MB) — data/raw/README.md의 안내대로 내려받아 배치
+data/raw/전체_도시철도운행정보_*.xlsx
