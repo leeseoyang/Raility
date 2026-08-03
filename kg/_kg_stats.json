@@ -1,0 +1,20 @@
+{
+  "총_노드": 1177,
+  "총_관계": 5688,
+  "엔티티_타입별": {
+    "Station": 1094,
+    "Line": 46,
+    "Operator": 20,
+    "Region": 12,
+    "MetroArea": 5
+  },
+  "관계_타입별": {
+    "ON_LINE": 1094,
+    "OPERATED_BY": 1094,
+    "LOCATED_IN": 1094,
+    "IN_METRO_AREA": 1094,
+    "CONNECTS_TO": 1089,
+    "TRANSFERS_TO": 177,
+    "LINE_OPERATED_BY": 46
+  }
+}
