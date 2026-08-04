@@ -6,5 +6,10 @@
 processed/od_daily_avg.csv
 processed/od_peak.csv
 
+# od_h1_analysis.py 대용량 산출물·중간 캐시 (실행으로 재생성 — 월별 zip 필요)
+processed/od_daily_avg_2026H1.csv
+processed/od_peak_2026H1.csv
+h1_cache/
+
 # 서울 월별 승하차 전체분(14.5MB)은 대표 2개월(202512·202606)만 커밋 — 나머지는 로컬 보관
 seoul_CARD_SUBWAY_MONTH_*.csv
