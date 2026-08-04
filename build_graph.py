@@ -58,18 +58,45 @@ def approx(a,b):
     if any(v is None or pd.isna(v) for v in (va,vb,la,lb)): return 9e9
     return math.hypot((va-vb)*111000,(la-lb)*88000)
 
-def resolve_seq(names):
-    """역명 시퀀스 → node id 시퀀스 (연속성 기반 후보 선택)"""
+nid_line_no ={r['nid']:r['노선번호'] for _,r in sta.iterrows()}
+nid_line_nm ={r['nid']:norm(r['노선명'])  for _,r in sta.iterrows()}
+nid_oper    ={r['nid']:str(r['운영기관명']) for _,r in sta.iterrows()}
+
+def resolve_seq(names, line_no=None, line_nm=None, allow=None, oper=None):
+    """역명 시퀀스 → node id 시퀀스.
+
+    같은 역명이 노선 수만큼 복제돼 있으므로(환승역은 좌표가 50 m 이내로 겹침)
+    좌표 근접만으로 고르면 사실상 무작위 선택이 된다. 반드시 노선을 먼저 본다.
+      ① 파싱 중인 노선의 노선번호와 일치하는 후보
+      ② 노선명이 일치하는 후보 (노선번호 표기가 파일 간 불일치하는 경우)
+      ③ 그래도 없으면 좌표 연속성 (직결운행 경계·분기점에서만 발생)
+    """
+    ln_no = str(line_no).strip() if line_no is not None else None
+    ln_nm = norm(line_nm) if line_nm else None
+    allow = {norm(x) for x in allow} if allow else None
     out=[]; prev=None
     for i,nm in enumerate(names):
         cands=name2nids.get(nm,[])
+        if oper: cands=[c for c in cands if oper in nid_oper.get(c,'')] or cands
         if not cands: out.append(None); prev=None; continue
-        if prev is not None and len(cands)>1: pick=min(cands,key=lambda c:approx(prev,c))
-        elif len(cands)==1: pick=cands[0]
+        if allow:
+            same=[c for c in cands if nid_line_nm.get(c) in allow]
         else:
-            nc=[];
+            same=[c for c in cands if ln_no and nid_line_no.get(c)==ln_no]
+            if not same and ln_nm:
+                same=[c for c in cands if nid_line_nm.get(c)==ln_nm]
+        if len(same)==1:
+            pick=same[0]
+        elif len(same)>1:                      # 한 노선에 동명 역이 둘 이상(순환·지선)
+            pick=min(same,key=lambda c:approx(prev,c)) if prev is not None else same[0]
+        elif len(cands)==1:
+            pick=cands[0]
+        elif prev is not None:
+            pick=min(cands,key=lambda c:approx(prev,c))
+        else:
+            nc=[]
             for j in range(i+1,min(i+3,len(names))):
-                nc=name2nids.get(names[j],[]);
+                nc=name2nids.get(names[j],[])
                 if nc: break
             pick=min(cands,key=lambda c:min([approx(c,x) for x in nc],default=0)) if nc else cands[0]
         out.append(pick); prev=pick
@@ -82,7 +109,7 @@ adj=set()
 for _,r in lin.iterrows():
     if pd.isna(r['정거장구성']): continue
     names=[hangul_name(t) for t in re.split(r'[,+]',str(r['정거장구성'])) if t.strip()]
-    seq=resolve_seq(names)
+    seq=resolve_seq(names, r['노선번호'], r['노선명'])
     for a,b in zip(seq,seq[1:]):
         if a and b and a!=b: adj.add(tuple(sorted((a,b))))
 adj_from_line=len(adj)
@@ -115,73 +142,302 @@ def add_pair(a,b,wk,dd=None):
 # (b) 전체경로형: 한 행이 곧 시퀀스
 for _,r in gen[gen['is_seq']].iterrows():
     names=[hname(t) for t in re.split(r'[,+]',str(r['역명'])) if t.strip()]
-    seq=resolve_seq(names); wk=str(r['요일구분']).startswith('평일')
+    seq=resolve_seq(names, r.get('노선번호'), r.get('노선명')); wk=str(r['요일구분']).startswith('평일')
     for a,b in zip(seq,seq[1:]): add_pair(a,b,wk)
 # (a) 정차별형: 열차번호로 묶어 순서·시각 사용
 perstop=gen[~gen['is_seq']].copy(); perstop['nm']=perstop['역명'].map(norm)
 for tn,g in perstop.groupby('열차번호',sort=False):
     g=g.reset_index(drop=True)
     if len(g)<2: continue
-    seq=resolve_seq(list(g['nm'])); wk=str(g['요일구분'].iloc[0]).startswith('평일')
+    seq=resolve_seq(list(g['nm']), g['노선번호'].iloc[0], g['노선명'].iloc[0])
+    wk=str(g['요일구분'].iloc[0]).startswith('평일')
     for i in range(len(seq)-1):
         arr2=g['arr'][i+1]; dep1=g['dep'][i]; dep2=g['dep'][i+1]
         dd=(arr2-dep1) if (arr2 is not None and dep1 is not None) else ((dep2-dep1) if (dep2 is not None and dep1 is not None) else None)
         add_pair(seq[i],seq[i+1],wk,dd)
 
-# ---- 운행정보는 '짧은 다리 엣지'로만 구조 보완(건너뛰기 엣지 배제) ----
-# 노선정보 구조에서 서로 다른 연결요소를 잇는 <2.5km 엣지만 채택
+# ---- 운행정보로 인접구간 보완 (급행 건너뛰기 엣지 배제) ----
+# 이전 판은 "이미 경로가 있으면 건너뛴다"(has_path)로 걸렀는데, 수도권은 노선정보만으로
+# 이미 하나의 연결요소가 되므로 수도권 내부의 누락 구간이 원리적으로 복구되지 않았다.
+# (구로–구일, 금정–범계, 금정–산본, 시청–충정로 등 공식 연속쌍 37개가 이 조건에 걸려 빠졌다.)
+# 대신 '두 역 사이에 같은 노선의 다른 역이 놓여 있으면 급행 건너뛰기'라는 기하 판정으로 거른다.
 GL=nx.Graph(); GL.add_nodes_from(sta['nid']); GL.add_edges_from(adj)
+line_members=defaultdict(list)
+for n_,l_ in nid_line_no.items(): line_members[l_].append(n_)
+
+def skips_station(a,b):
+    """a-b 사이에 같은 노선의 제3의 역이 (거의) 일직선으로 놓여 있으면 건너뛰기 구간."""
+    d=approx(a,b)
+    if d>=9e8: return False
+    for l_ in {nid_line_no.get(a),nid_line_no.get(b)}:
+        for c in line_members.get(l_,()):
+            if c==a or c==b: continue
+            da,db=approx(a,c),approx(c,b)
+            if da<60 or db<60: continue          # 환승 복제 노드
+            if da+db < d*1.10: return True
+    return False
+
+MAXGAP=15000                                     # 기하 판정이 본 필터이므로 상한은 안전장치
 cand=sorted([(approx(a,b),(a,b)) for (a,b) in op_pairs], key=lambda x:x[0])
-new_from_op=set()
+new_from_op=set(); skipped=0
 for dist,(a,b) in cand:
-    if dist>=4000: break
+    if dist>=MAXGAP: break
     if GL.nodes.get(a) is None or GL.nodes.get(b) is None: continue
-    import networkx as _nx
-    if not _nx.has_path(GL,a,b):
-        GL.add_edge(a,b); adj.add(tuple(sorted((a,b)))); new_from_op.add(tuple(sorted((a,b))))
+    if GL.has_edge(a,b): continue
+    if skips_station(a,b): skipped+=1; continue
+    GL.add_edge(a,b); adj.add(tuple(sorted((a,b)))); new_from_op.add(tuple(sorted((a,b))))
+print(f"운행정보 보완: 채택 {len(new_from_op)} · 건너뛰기로 기각 {skipped}")
 new_from_op=len(new_from_op)
 adj=sorted(adj)
 
 # ---------- 역간거리(실측 선로거리) 결합: data/raw/역간거리/*.csv ----------
 import glob,os
-gapdist={}; gap_drop=[]  # (nid,nid) -> 실측 m
+# 파일별 선명 표기 → 역사정보 노선명. 표기가 파일마다 달라(중앙선/경의중앙, 4호선/안산과천선 …)
+# 매핑 없이 좌표로만 풀면 청량리(1호선)–왕십리(2호선) 같은 엉뚱한 쌍이 정답지에 들어간다.
+SEOUL8 = {f'{i}호선':{f'{i}호선'} for i in range(1,9)}
+KORAIL1 = {'경원선','경부선','경인선','장항선'}
+KORAIL_MAP = {'1호선(경부선)':KORAIL1,'1호선(경인선)':KORAIL1,'1호선(광명선)':KORAIL1,
+              '1호선(서동탄선)':KORAIL1,'3호선':{'일산선'},'4호선':{'안산과천선'},
+              '경강':{'경강선'},'경의중앙':{'경의중앙선','경원선'},'경춘':{'경춘선'},
+              '대경선':{'대경선'},'동해':{'동해선'},'서해선':{'서해선'},
+              '수인분당':{'수인선','분당선'}}
+CITY_LINE = lambda city,n: {f'{city} 도시철도 {i}호선' for i in range(1,n+1)}
+GAP_MAP={
+ '서울교통공사':('서울교통공사', SEOUL8),
+ '수도권1호선':('한국철도공사', KORAIL_MAP),
+ '수도권2호선':('서울교통공사', SEOUL8), '수도권3호선':('서울교통공사', SEOUL8),
+ '수도권4호선':('서울교통공사', SEOUL8), '수도권5호선':('서울교통공사', SEOUL8),
+ '수도권6호선':('서울교통공사', SEOUL8), '수도권7호선':('서울교통공사', SEOUL8),
+ '수도권8호선':('서울교통공사', SEOUL8),
+ '수도권9호선':(None, {'9호선':{'수도권  도시철도 9호선','서울 도시철도 9호선'}}),
+ '신분당선'   :(None,           {'신분당':{'신분당선'}}),
+ '코레일'     :('한국철도공사', KORAIL_MAP),
+ '경강선'     :('한국철도공사', KORAIL_MAP), '경의중앙선':('한국철도공사', KORAIL_MAP),
+ '경춘선'     :('한국철도공사', KORAIL_MAP), '분당선':('한국철도공사', KORAIL_MAP),
+ '수인선'     :('한국철도공사', KORAIL_MAP),
+ '공항철도'   :('공항철도',     {'공항':{'인천국제공항선'}}),
+ '우이신설'   :(None,           {'우이신설':{'우이신설선'}}),
+ '의정부'     :(None,           {'의정부':{'의정부'}}),
+ '에버라인'   :(None,           {'에버라인':{'에버라인'}}),
+ '인천1호선'  :('인천교통공사', {'인천1호선':{'인천지하철 1호선'}}),
+ '인천2호선'  :('인천교통공사', {'인천2호선':{'인천지하철 2호선'}}),
+ '인천교통공사':('인천교통공사',{'인천1호선':{'인천지하철 1호선'},'인천2호선':{'인천지하철 2호선'},
+                                '7호선':{'도시철도 7호선'}}),
+ '대구교통공사':('대구교통공사',{**{str(i):CITY_LINE('대구',3) for i in (1,2,3)},
+                                **{f'{i}호선':CITY_LINE('대구',3) for i in (1,2,3)}}),
+ '대전교통공사':('대전교통공사',{'1호선':{'대전 도시철도 1호선'}}),
+ '부산교통공사':('부산광역시 부산교통공사',
+                 {f'{i}호선':{'부산 도시철도 1호선','부산 도시철도 2호선','부산 도시철도 3호선',
+                              '부산 경량도시철도 4호선'} for i in (1,2,3,4)}),
+}
+# 역간거리 파일의 역명 표기가 역사정보와 다른 경우 (노선, 표기명) → 역사정보 표준명
+GAP_NAME_FIX={('7호선','총신대입구'):'이수'}
+gapdist={}; gap_drop=[]; gap_unmatched=[]  # (nid,nid) -> 실측 m
+adj_set_ref=set(adj)
 gap_files=sorted(glob.glob(RAW+"역간거리/*.csv")+glob.glob(RAW+"역간거리/*.CSV"))
-for fp in gap_files:
-    df=None
+
+def _read(fp):
     for enc in ('cp949','utf-8-sig','euc-kr'):
-        try: df=pd.read_csv(fp,encoding=enc); break
+        try: return pd.read_csv(fp,encoding=enc)
         except Exception: continue
+    return None
+
+def _fnum(x):
+    try:
+        v=float(x); return v if v==v else None
+    except Exception: return None
+
+def _register(a,b,km,src):
+    """실측 구간 등록. 직선거리와 0.4~3.0배 범위일 때만 채택(오배열 방지)."""
+    if not(a and b) or a==b or not km or km<=0: return
+    m=round(km*1000); h=approx(a,b)
+    if (h>=9e8) or (h<80) or (0.4<=m/h<=3.0):
+        gapdist.setdefault(tuple(sorted((a,b))), m)
+    else:
+        gap_drop.append((by.at[a,'역사명'],by.at[b,'역사명'],m,round(h),src))
+
+def _seq_pairs(seq, vals, from_prev):
+    for i in range(len(seq)-1):
+        yield seq[i], seq[i+1], (vals[i+1] if from_prev else vals[i])
+
+for fp in gap_files:
+    df=_read(fp)
     if df is None: continue
-    cols=list(df.columns)
+    base=os.path.basename(fp); cols=list(df.columns)
+    oper,lmap=(None,{})
+    for k,(o,mp) in GAP_MAP.items():
+        if k in base: oper,lmap=o,mp; break
+
+    # ── 형식 C: 시작역/도착역 직접 쌍 (광주)
+    if '시작역' in cols and '도착역' in cols:
+        dcol=next((c for c in cols if '거리' in c), None)
+        oper2=oper or '광주교통공사'
+        for _,r in df.iterrows():
+            a=resolve_seq([norm(r['시작역'])],None,None,allow={'광주도시철도 1호선'},oper=oper2)[0]
+            b=resolve_seq([norm(r['도착역'])],None,None,allow={'광주도시철도 1호선'},oper=oper2)[0]
+            _register(a,b,_fnum(r[dcol]),base)
+        continue
+
     gcol='선명' if '선명' in cols else ('호선' if '호선' in cols else None)
     ncol='역명' if '역명' in cols else None
+    if not(gcol and ncol): continue
+
+    # ── 형식 B: 호선구성역정보 (역구성순서 + 구간키로 = 직전역까지 거리)
+    if '역구성순서' in cols and '구간키로' in cols:
+        for gv,g in df.groupby(gcol,sort=False):
+            g=g.sort_values('역구성순서').reset_index(drop=True)
+            allow=lmap.get(str(gv).strip())
+            seq=resolve_seq([norm(x) for x in g[ncol]],None,gv,allow=allow,oper=oper)
+            vals=[_fnum(v) for v in g['구간키로']]
+            for i in range(len(seq)-1):
+                _register(seq[i],seq[i+1],vals[i+1],base)
+        continue
+
+    # ── 형식 A: 선명 그룹 순서 + 역간거리
     dcol=next((c for c in cols if '역간거리' in c and '후행' not in c and '누계' not in c), None)
-    if not(gcol and ncol and dcol): continue
-    def fnum(x):
-        try: return float(x)
-        except: return None
+    if dcol is None: continue
     for gv,g in df.groupby(gcol,sort=False):
         g=g.reset_index(drop=True)
-        seq=resolve_seq([norm(x) for x in g[ncol]])
-        vals=[fnum(v) for v in g[dcol]]
-        # 규약 판별: 첫 값이 0/결측 → '이전역에서', 아니면 '다음역까지'
+        allow=lmap.get(str(gv).strip())
+        raw=[norm(x) for x in g[ncol]]
+        raw=[GAP_NAME_FIX.get((str(gv).strip(),x),x) for x in raw]
+        seq=resolve_seq(raw,None,gv,allow=allow,oper=oper)
+        vals=[_fnum(v) for v in g[dcol]]
         from_prev = (vals[0] in (0,0.0,None))
-        for i in range(len(seq)-1):
-            a,b=seq[i],seq[i+1]
-            km=vals[i+1] if from_prev else vals[i]
-            if a and b and a!=b and km and km>0:
-                m=round(km*1000); h=approx(a,b)
-                # 실측/직선 교차검증: 직선이 신뢰구간이면(>80m) 0.4~3.0배만 채택(오배열 방지). 직선이 비정상(<80m)이면 실측 신뢰
-                if (h>=9e8) or (h<80) or (0.4<=m/h<=3.0):
-                    gapdist[tuple(sorted((a,b)))]=m
-                else:
-                    gap_drop.append((by.at[a,'역사명'],by.at[b,'역사명'],m,round(h)))
+        for a,b,km in _seq_pairs(seq,vals,from_prev):
+            _register(a,b,km,base)
+        if allow:
+            al={norm(x) for x in allow}
+            for nm_,pk in zip(raw,seq):
+                if pk is not None and nid_line_nm.get(pk) not in al:
+                    gap_unmatched.append({'파일':base,'선명':str(gv),'표기명':nm_,
+                                          '잘못붙은노선':by.at[pk,'노선명']})
+
 print("역간거리 파일:",[os.path.basename(f) for f in gap_files],"| 결합 구간수:",len(gapdist),"| 기각:",len(gap_drop))
+if gap_unmatched:
+    u=pd.DataFrame(gap_unmatched).drop_duplicates()
+    print("  ⚠ 지정 노선에서 못 찾은 역명:", len(u)); print(u.head(20).to_string(index=False))
+
+# ---- 공식 역간거리 연속쌍을 인접엣지로 직접 채택 ----
+# 국가철도공단 역간거리 파일의 연속쌍은 공단이 공표한 실제 인접 구간이다.
+# 노선정보 정거장구성이 누락한 구간(용산–이촌, 가좌–DMC, 응봉–왕십리 …)을 여기서 메운다.
+gap_added=0
+for (a,b) in gapdist:
+    k=tuple(sorted((a,b)))
+    if k not in adj_set_ref:
+        adj_set_ref.add(k); gap_added+=1
+print("역간거리에서 추가된 인접엣지:", gap_added)
+
+# ---- 지선 이어붙이기(branch wrap) 유령 엣지 제거 ----
+# 노선정보 정거장구성은 지선을 한 문자열에 이어 붙이므로, 앞 지선의 종점과 뒤 지선의 기점이
+# 인접한 것처럼 읽힌다(5호선 하남검단산|둔촌동, 경의중앙 서울(경의선)|중랑 …).
+# 4 km를 넘는 인접쌍은 ① 실측 역간거리 또는 ② 운행정보 열차 순서 중 하나로 뒷받침될 때만 남긴다.
+ghost=[]
+for k in list(adj_set_ref):
+    d=approx(*k)
+    if d>4000 and k not in gapdist and k not in op_pairs:
+        adj_set_ref.discard(k); ghost.append((by.at[k[0],'역사명'],by.at[k[1],'역사명'],round(d)))
+print("유령 엣지 제거:",len(ghost),ghost)
+
+# ---- 동명이노선 오결합 제거 ----
+# 한 역에서 같은 이름의 노드 여러 개로 동시에 인접엣지가 나가면, 운행정보 역명이
+# 엉뚱한 노선 복제본에 붙은 것이다(고촌역–김포공항/공항철도 vs 김포공항역/김포도시철도).
+nb=defaultdict(list)
+for a,b in adj_set_ref: nb[a].append(b); nb[b].append(a)
+dup=[]
+for a,ns in nb.items():
+    byname=defaultdict(list)
+    for x in ns: byname[by.at[x,'name_n'] if 'name_n' in by.columns else norm(by.at[x,'역사명'])].append(x)
+    for nm_,xs in byname.items():
+        if len(xs)<2: continue
+        keep=[x for x in xs if nid_line_no.get(x)==nid_line_no.get(a)] or \
+             [min(xs,key=lambda x:approx(a,x))]
+        for x in xs:
+            if x not in keep:
+                k=tuple(sorted((a,x)))
+                if k in adj_set_ref and k not in gapdist:
+                    adj_set_ref.discard(k); dup.append((by.at[a,'역사명'],by.at[x,'역사명'],by.at[x,'노선명']))
+print("동명이노선 오결합 제거:",len(dup),dup)
+
+# ---- 사이에 다른 역이 놓인 인접 제거 (급행 건너뛰기·오결합) ----
+# 두 역을 잇는 직선 위에 제3의 역이 놓여 있으면 실제 인접 구간이 아니다.
+# 노선 소속을 가리지 않고 검사하므로, 급행 건너뛰기와 노선 복제본 오결합을 함께 걸러낸다.
+# 실측 역간거리로 확인된 구간은 공단 공표값이므로 검사 대상에서 제외한다.
+nname={n_:norm(by.at[n_,'역사명']) for n_ in sta['nid']}
+def has_between_same_line(a,b):
+    """a-b 직선 위에 '같은 노선'의 제3의 역이 있으면 급행 건너뛰기 구간."""
+    d=approx(a,b)
+    if d>=9e8: return None
+    na,nb=nname[a],nname[b]
+    for l_ in {nid_line_no.get(a),nid_line_no.get(b)}:
+        for c in line_members.get(l_,()):
+            if c==a or c==b or nname[c] in (na,nb): continue
+            da,db=approx(a,c),approx(c,b)
+            if da<150 or db<150: continue
+            if da+db < d*1.08: return c
+    return None
+
+# 실제 노선 간 접속(구로–구일 0.9 km, 지축–삼송 1.5 km 등)은 모두 짧은 분기점 링크다.
+# 그보다 먼 교차노선 인접은 운행정보 역명이 엉뚱한 노선 복제본에 붙은 결과로 본다.
+XLINE_MAX=1500
+pruned={}
+for k in list(adj_set_ref):
+    if k in gapdist: continue
+    a,b=k; d=approx(a,b)
+    if d<=XLINE_MAX: continue
+    c=has_between_same_line(a,b)
+    if c is not None:
+        adj_set_ref.discard(k); pruned[k]=(d,'급행건너뛰기(사이: %s)'%by.at[c,'역사명'])
+    elif nid_line_no.get(a)!=nid_line_no.get(b):
+        adj_set_ref.discard(k); pruned[k]=(d,'교차노선 장거리')
+print("가지치기:",len(pruned))
+for k,(d,why) in sorted(pruned.items(),key=lambda x:-x[1][0])[:20]:
+    print(f"    {by.at[k[0],'역사명']}({by.at[k[0],'노선명']}) – {by.at[k[1],'역사명']}({by.at[k[1],'노선명']}) {round(d)}m · {why}")
+
+# 가지치기로 조각이 떨어져 나오면, 기각된 후보 중 최단 링크로만 복원한다.
+GP=nx.Graph(); GP.add_nodes_from(sta['nid']); GP.add_edges_from(adj_set_ref)
+restored=[]
+while True:
+    comp={}
+    for i,c in enumerate(nx.connected_components(GP)):
+        for n_ in c: comp[n_]=i
+    sizes=defaultdict(int)
+    for n_ in comp: sizes[comp[n_]]+=1
+    cands=[(d,k) for k,(d,_) in pruned.items() if comp[k[0]]!=comp[k[1]]
+           and min(sizes[comp[k[0]]],sizes[comp[k[1]]])<15]
+    if not cands: break
+    d,k=min(cands)
+    adj_set_ref.add(k); GP.add_edge(*k); pruned.pop(k)
+    restored.append((by.at[k[0],'역사명'],by.at[k[1],'역사명'],round(d)))
+print("고립 방지 복원:",restored)
+adj=sorted(adj_set_ref)
 
 # ---------- 환승엣지 ----------
-trans=sorted({tuple(sorted((a,b))) for nm,ids in name2nids.items() if len(ids)>1
-              for a,b in itertools.combinations(ids,2)
-              if by.at[a,'노선번호']!=by.at[b,'노선번호'] and approx(a,b)<1200})
+# ① 같은 역명 + 다른 노선 + 좌표근접
+trans=set()
+for nm,ids in name2nids.items():
+    if len(ids)<2: continue
+    for a,b in itertools.combinations(ids,2):
+        if by.at[a,'노선번호']!=by.at[b,'노선번호'] and approx(a,b)<1200:
+            trans.add(tuple(sorted((a,b))))
+name_only=len(trans)
+
+# ② 역명이 다른 실제 환승 (총신대입구(이수)↔이수 등). 이름만으로는 절대 못 찾으므로
+#    원본의 환승역구분/환승노선명을 쓰지 않고, 좌표 근접(<350 m) + 다른 노선으로 보완한다.
+#    350 m는 ①에서 확인된 실제 환승 통로 길이 분포(중앙값 103 m, 최대 435 m)에 근거한다.
+XFER_MAXD=350
+nids_all=list(sta['nid'])
+for a,b in itertools.combinations(nids_all,2):
+    if by.at[a,'노선번호']==by.at[b,'노선번호']: continue
+    k=tuple(sorted((a,b)))
+    if k in trans: continue
+    if approx(a,b)<XFER_MAXD:
+        trans.add(k)
+name_diff=len(trans)-name_only
+
+# ③ 원본 환승노선명이 지목하는데 ①②로도 안 잡힌 쌍은 수동 확인 대상으로 기록
+trans=sorted(trans)
+print(f"환승엣지: 동일역명 {name_only} + 좌표근접(이름다름) {name_diff} = {len(trans)}")
 
 # ---------- 그래프 ----------
 import numpy as np
@@ -219,9 +475,36 @@ print(json.dumps(stats,ensure_ascii=False,indent=2))
 print("고립노드:",[(by.at[n,'역사명'],by.at[n,'노선명']) for n in iso])
 
 # ---------- 검증 리포트 ----------
-val=[{'구분':'장거리엣지(>15km)','역A':by.at[u,'역사명'],'노선A':by.at[u,'노선명'],
+# (1) 장거리 운행엣지 — 임계값을 15 km에서 4 km로 낮춘다. 이전 판은 15 km 기준이라
+#     서울(공항철도)–중랑(경의중앙) 10.5 km 같은 유령 엣지가 통과했다.
+val=[{'구분':'장거리엣지(>4km, 실측없음)','역A':by.at[u,'역사명'],'노선A':by.at[u,'노선명'],
       '역B':by.at[v,'역사명'],'노선B':by.at[v,'노선명'],'값':round(float(d['거리_직선_m']))}
-     for u,v,d in G.edges(data=True) if d['type']=='운행' and d['거리_직선_m'] not in ('',None) and float(d['거리_직선_m'])>15000]
+     for u,v,d in G.edges(data=True)
+     if d['type']=='운행' and d['거리_실측_m'] in ('',None)
+     and d['거리_직선_m'] not in ('',None) and float(d['거리_직선_m'])>4000]
+
+# (2) 노선별 자기 인접 성분 수 — 정상이면 1(지선 있으면 소수). 노선 해석이 깨지면 급증한다.
+GA=nx.Graph(); GA.add_nodes_from(sta['nid']); GA.add_edges_from(adj)
+for l_,mem in sorted(line_members.items()):
+    if len(mem)<5: continue
+    ncomp=nx.number_connected_components(GA.subgraph(mem))
+    if ncomp>2:
+        val.append({'구분':'노선내_인접단절','역A':by.at[mem[0],'노선명'],'노선A':l_,
+                    '역B':f'{len(mem)}개역','노선B':'','값':ncomp})
+
+# (3) 공식 역간거리 연속쌍 재현율 — 정답지 대비 누락 구간을 직접 센다.
+official=set(); miss=[]
+for key in gapdist:
+    official.add(key)
+for key in official:
+    if not GA.has_edge(*key):
+        a,b=key; miss.append({'구분':'공식연속쌍_누락','역A':by.at[a,'역사명'],'노선A':by.at[a,'노선명'],
+                              '역B':by.at[b,'역사명'],'노선B':by.at[b,'노선명'],'값':gapdist[key]})
+val+=miss
+print(f"공식 역간거리 연속쌍 {len(official)} 중 그래프 미반영 {len(miss)} "
+      f"(재현율 {(1-len(miss)/max(len(official),1))*100:.1f}%)")
+print("노선내 인접단절(성분>2):",[(v['역A'],v['값']) for v in val if v['구분']=='노선내_인접단절'])
+print("장거리엣지(>4km, 실측없음):",[(v['역A'],v['역B'],v['값']) for v in val if v['구분'].startswith('장거리')][:12])
 for c in comps[1:]:
     if len(c)<=5:
         val.append({'구분':'소규모연결요소','역A':' / '.join(by.at[n,'역사명'] for n in c),
@@ -229,8 +512,9 @@ for c in comps[1:]:
 lat2=pd.to_numeric(sta['역위도'],errors='coerce'); lon2=pd.to_numeric(sta['역경도'],errors='coerce')
 val.append({'구분':'좌표결측','역A':int(lat2.isna().sum()+lon2.isna().sum()),'노선A':'','역B':'','노선B':'','값':''})
 pd.DataFrame(val).to_csv(OUT+"_validation.csv",index=False,encoding='utf-8-sig')
-print("장거리엣지(>15km):",sum(1 for x in val if x['구분']=='장거리엣지(>15km)'),
-      "| 좌표결측:",int(lat2.isna().sum()+lon2.isna().sum()))
+print("좌표결측:",int(lat2.isna().sum()+lon2.isna().sum()))
+stats["공식연속쌍"]=len(official); stats["공식연속쌍_누락"]=len(miss)
+stats["공식연속쌍_재현율%"]=round((1-len(miss)/max(len(official),1))*100,1)
 
 # ---------- 저장 ----------
 out=sta[['nid','역번호','역사명','노선번호','노선명','운영기관명','역위도','역경도','환승역구분','환승노선명','역사도로명주소']].rename(columns={'nid':'node_id'})
