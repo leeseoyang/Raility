@@ -1,0 +1,10 @@
+# 대용량 OD 원본(서울시 역간 OD 7일치 66MB, 환승경로 10MB)은 커밋하지 않는다.
+# data/od/README.md 안내대로 내려받아 이 폴더에 배치.
+*.zip
+
+# od_analysis.py 대용량 산출물 (실행으로 재생성)
+processed/od_daily_avg.csv
+processed/od_peak.csv
+
+# 서울 월별 승하차 전체분(14.5MB)은 대표 2개월(202512·202606)만 커밋 — 나머지는 로컬 보관
+seoul_CARD_SUBWAY_MONTH_*.csv
