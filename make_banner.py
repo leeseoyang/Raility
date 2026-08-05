@@ -11,7 +11,7 @@ d = pd.read_csv("results/edge_vulnerability_by_region.csv")
 order = ["수도권","부산·김해","대구","대전","광주"]
 EN = {"수도권":"Seoul Metropolitan","부산·김해":"Busan–Gimhae","대구":"Daegu","대전":"Daejeon","광주":"Gwangju"}
 
-fig, axes = plt.subplots(1, 5, figsize=(15, 3.1), dpi=100)
+fig, axes = plt.subplots(1, 5, figsize=(15, 2.3), dpi=100)
 fig.patch.set_facecolor("#f7f6f2")
 for ax, r in zip(axes, order):
     g = d[d["권역"] == r]
@@ -35,7 +35,9 @@ for ax, r in zip(axes, order):
     ax.set_aspect(1/np.cos(np.radians(lat0)), adjustable="datalim")
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values(): sp.set_visible(False)
-    ax.set_title(EN[r], fontsize=9.2, color="#52514e", pad=5, fontfamily="DejaVu Sans")
-fig.subplots_adjust(left=.005, right=.995, top=.83, bottom=.04, wspace=.04)
+    ax.annotate(EN[r], xy=(0.5, 0.0), xycoords="axes fraction", xytext=(0, -11),
+                textcoords="offset points", ha="center", va="top",
+                fontsize=8.6, color="#52514e", fontfamily="DejaVu Sans")
+fig.subplots_adjust(left=.005, right=.995, top=.97, bottom=.13, wspace=.04)
 fig.savefig("figures/banner_notion.png", facecolor="#f7f6f2")
 print("saved")
