@@ -1,0 +1,48 @@
+name: Deploy Raility to GitHub Pages
+
+# raility_app/ 만 Pages 아티팩트로 올린다. 저장소 루트를 그대로 게시하면
+# 앱이 /raility_app/ 하위에 놓이고 data/ 원본까지 함께 공개되므로 쓰지 않는다.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'raility_app/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포는 한 번에 하나만. 진행 중인 배포는 취소하지 않는다(중간에 끊기면 사이트가 깨진다).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # 그래프·최단경로·SPOF·절점 판정 검증 47건. 실패하면 배포하지 않는다.
+      - name: 로직 검증
+        run: node raility_app/test_graph.js
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: raility_app
+      - id: deployment
+        uses: actions/deploy-pages@v4

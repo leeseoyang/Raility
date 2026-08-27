@@ -16,3 +16,14 @@ desktop.ini
 
 # 대용량 원본 (18MB) — data/raw/README.md의 안내대로 내려받아 배치
 data/raw/전체_도시철도운행정보_*.xlsx
+
+# Flutter
+raility_flutter/build/
+raility_flutter/.dart_tool/
+raility_flutter/android/.gradle/
+raility_flutter/android/local.properties
+raility_flutter/.flutter-plugins-dependencies
+
+# 로컬 도구 설정
+.claude/settings.local.json
+.vscode/.chrome-profile/
