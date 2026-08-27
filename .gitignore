@@ -27,3 +27,13 @@ raility_flutter/.flutter-plugins-dependencies
 # 로컬 도구 설정
 .claude/settings.local.json
 .vscode/.chrome-profile/
+
+# 개인 계정 백업 — 공개 저장소에 올리지 않는다
+*.manusaccount
+
+# 참고문헌 원문 PDF — 저작권이 있어 재배포하지 않는다
+re/
+
+# 수동 배포 번들 (Actions 가 raility_app/ 에서 생성)
+Raility_GitHubPages_배포.zip
+app-icon/*.zip
