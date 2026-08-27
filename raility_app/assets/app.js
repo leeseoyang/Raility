@@ -825,12 +825,38 @@ function initRegionPicker() {
   var btn = $('#regionBtn');
   function label() { $('#regionLabel').textContent = state.region; }
   label();
+  // 순환 토글이 아니라 리스트에서 고른다 — 권역이 6개라 순환은 최대 5번 눌러야 한다.
   btn.onclick = function () {
-    var i = REGIONS.indexOf(state.region);
-    state.region = REGIONS[(i + 1) % REGIONS.length];
-    localStorage.setItem('rl.region', state.region);
-    label();
-    toast(state.region + ' 기준으로 검색합니다');
+    var counts = {};
+    STATIONS.forEach(function (s) { counts[s.region] = (counts[s.region] || 0) + 1; });
+    $('#sheetTitle').textContent = '검색 기준 권역';
+    $('#searchWrap').style.display = 'none';
+    var list = $('#sheetList');
+    list.innerHTML = '';
+    var rows = el('div', 'rows');
+    REGIONS.forEach(function (r) {
+      var b = el('button', 'row');
+      var m = el('div', 'row-main');
+      var nm = el('div', 'row-name', r);
+      if (r === state.region) nm.style.color = 'var(--tint)';
+      m.appendChild(nm);
+      b.appendChild(m);
+      var val = el('div', 'row-val');
+      val.innerHTML = '<small>' + (counts[r] || 0) + '역</small>' +
+        (r === state.region
+          ? '<span style="color:var(--tint);font-size:15px">✓</span>' : '');
+      b.appendChild(val);
+      b.onclick = function () {
+        state.region = r;
+        localStorage.setItem('rl.region', r);
+        label();
+        closeSearch();
+        $('#searchWrap').style.display = '';
+      };
+      rows.appendChild(b);
+    });
+    list.appendChild(rows);
+    $('#sheet').classList.add('on');
   };
 }
 

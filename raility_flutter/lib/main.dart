@@ -121,18 +121,7 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
                 if (showRegion)
                   _RegionChip(
                     label: app.region,
-                    onTap: () {
-                      final rs = app.graph.regions;
-                      final i = rs.indexOf(app.region);
-                      app.region = rs[(i + 1) % rs.length];
-                      ScaffoldMessenger.of(context)
-                        ..clearSnackBars()
-                        ..showSnackBar(SnackBar(
-                          content: Text('${app.region} 기준으로 검색합니다'),
-                          duration: const Duration(milliseconds: 1500),
-                          behavior: SnackBarBehavior.floating,
-                        ));
-                    },
+                    onTap: () => _pickRegion(context, app),
                   ),
               ],
             ),
@@ -141,6 +130,68 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
       ),
     );
   }
+}
+
+/// 검색 기준 권역을 리스트에서 고른다. 권역별 역 수를 함께 보여준다.
+Future<void> _pickRegion(BuildContext context, AppState app) {
+  final ink = Palette.of(context);
+  final g = app.graph;
+  final counts = <String, int>{};
+  for (final s in g.stations) {
+    counts[s.region] = (counts[s.region] ?? 0) + 1;
+  }
+
+  return showModalBottomSheet(
+    context: context,
+    backgroundColor: ink.surface,
+    showDragHandle: true,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14))),
+    builder: (ctx) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Text('검색 기준 권역',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: ink.i0)),
+          ),
+          for (final r in g.regions)
+            InkWell(
+              onTap: () {
+                app.region = r;
+                Navigator.pop(ctx);
+              },
+              child: Container(
+                decoration: r == g.regions.first
+                    ? null
+                    : BoxDecoration(
+                        border: Border(top: BorderSide(color: ink.line, width: 0.5))),
+                margin: r == g.regions.first ? null : const EdgeInsets.only(left: 16),
+                padding: EdgeInsets.fromLTRB(r == g.regions.first ? 16 : 0, 12, 16, 12),
+                child: Row(children: [
+                  Expanded(
+                    child: Text(r,
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: r == app.region ? FontWeight.w600 : FontWeight.w400,
+                            color: ink.i0)),
+                  ),
+                  Text('${counts[r] ?? 0}역',
+                      style: TextStyle(fontSize: 13, color: ink.i3)),
+                  if (r == app.region) ...[
+                    const SizedBox(width: 10),
+                    Icon(Icons.check, size: 19, color: ink.tint),
+                  ],
+                ]),
+              ),
+            ),
+          const SizedBox(height: 6),
+        ],
+      ),
+    ),
+  );
 }
 
 class _RegionChip extends StatelessWidget {
