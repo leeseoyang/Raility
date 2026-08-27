@@ -240,5 +240,27 @@ console.log('  ' + Object.keys(byReg).sort(function (a, b) { return byReg[b] - b
 ok('대구 90개 이상 (주소 누락 보정 확인)', (byReg['대구'] || 0) >= 90, byReg['대구']);
 ok('미분류(기타) 30개 미만', (byReg['기타'] || 0) < 30, byReg['기타'] || 0);
 
+/* ── 11. 승강장 접근성 (build_accessibility.py 결합 확인) ── */
+hdr('승강장 접근성');
+var withAc = NET.nodes.filter(function (n) { return n.ac; });
+ok('접근성 자료 보유 노드 800개 이상', withAc.length >= 800, withAc.length + '개');
+var acBad = withAc.filter(function (n) {
+  return n.ac.length !== 5 || n.ac[0] !== n.ac[1] + n.ac[2] + n.ac[3] ||
+         n.ac.some(function (v, i) { return i < 4 && v !== 0 && v !== 1 && i > 0; });
+});
+ok('위험도 = 세 장벽 플래그의 합', acBad.length === 0, acBad.length + '개 불일치');
+// '자료 없음'(ac 필드 없음)과 '장벽 없음'(위험도 0)이 구분되는지 — 아직 승강장
+// 정보가 발행되지 않은 9호선은 반드시 필드가 없어야 한다.
+var line9 = NET.nodes.filter(function (n) { return n.l.indexOf('9호선') >= 0; });
+ok('자료 없는 노선(9호선)은 ac 필드 자체가 없음',
+   line9.length > 0 && line9.every(function (n) { return !n.ac; }), line9.length + '개 중 오염');
+// 대전 1호선: 전 노드 자료 보유 + 다수가 안전발판 미설치(원본 80.4%와 부합해야 함)
+var dj = NET.nodes.filter(function (n) { return n.l === '대전 도시철도 1호선'; });
+var djAc = dj.filter(function (n) { return n.ac; });
+var djNoPlate = djAc.filter(function (n) { return n.ac[1] === 1; });
+ok('대전 1호선 전 노드 접근성 자료 보유', djAc.length === dj.length, djAc.length + '/' + dj.length);
+ok('대전 안전발판 미설치 다수 (원본 80% 수준)', djNoPlate.length >= dj.length * 0.6,
+   djNoPlate.length + '/' + dj.length);
+
 console.log('\n' + (fail === 0 ? '전부 통과' : fail + '건 실패') + '  (통과 ' + pass + ' / 실패 ' + fail + ')');
 process.exit(fail ? 1 : 0);

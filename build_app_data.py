@@ -49,6 +49,12 @@ def region_of(addr, line, op, lat, lon):
 nodes = read(P("data", "processed", "nodes.csv"))
 demand = {r["node_id"]: r for r in read(P("data", "processed", "node_demand.csv"))}
 
+# 승강장 접근성 (build_accessibility.py 산출물). 아직 공공데이터가 없는 노선이
+# 있으므로 없는 노드는 키를 아예 안 넣는다 — 0 으로 채우면 '장벽 없음'과
+# '자료 없음'이 구분되지 않아 없는 안전을 있다고 보고하게 된다.
+_ap = P("data", "processed", "accessibility.csv")
+access = {r["node_id"]: r for r in read(_ap)} if os.path.exists(_ap) else {}
+
 def fnum(v, d=0.0):
     try:
         return float(v)
@@ -62,7 +68,8 @@ for r in nodes:
     dm = demand.get(nid)
     lat, lon = fnum(r["역위도"]), fnum(r["역경도"])
     idx[nid] = len(N)
-    N.append({
+    ac = access.get(nid)
+    node = {
         "i": nid,
         "n": r["역사명"].replace("역", "") if len(r["역사명"]) > 2 and r["역사명"].endswith("역") else r["역사명"],
         "fn": r["역사명"],
@@ -74,7 +81,13 @@ for r in nodes:
         "x": 1 if "환승" in (r.get("환승역구분") or "") else 0,
         "d": round(fnum(dm["일평균승하차_배분"]) if dm else 0.0),
         "ad": r.get("역사도로명주소", ""),
-    })
+    }
+    if ac:
+        # [위험도, 안전발판없음, 승강장연결안됨, 스크린도어없음, 최대역층]
+        node["ac"] = [int(fnum(ac["접근성위험도"])), int(fnum(ac["안전발판_없음"])),
+                      int(fnum(ac["승강장연결_안됨"])), int(fnum(ac["스크린도어_없음"])),
+                      int(fnum(ac["최대역층"]))]
+    N.append(node)
 
 # ── 엣지 ───────────────────────────────────────────────────
 TRANSFER_SEC = 210          # 환승 도보+대기 가정
