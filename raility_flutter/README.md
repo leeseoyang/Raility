@@ -21,7 +21,7 @@ VS Code에서는 `F5` → **Raility (Flutter · 에뮬레이터)** 를 고르면
 
 ```bash
 flutter analyze     # 0 issues
-flutter test        # 24건
+flutter test        # 30건
 ```
 
 `test/graph_test.dart` 는 웹판 `raility_app/test_graph.js` 와 **같은 기준**으로
@@ -64,7 +64,7 @@ lib/
     daejeon.dart          대전 전용 뷰
     data_screen.dart      데이터 출처 · 분석 방법
 assets/network.json       네트워크 번들 (build_app_data.py 생성)
-test/graph_test.dart      로직 검증 24건
+test/graph_test.dart      로직 검증 30건
 ```
 
 ## 대전권 결과

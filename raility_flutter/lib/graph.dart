@@ -34,8 +34,13 @@ class NodeInfo {
   final String fullName, shortName, line, op, region, addr;
   final double lat, lon;
   final int demand, transfer;
+
+  /// 승강장 접근성 [위험도, 안전발판없음, 승강장연결안됨, 스크린도어없음, 최대역층].
+  /// null 은 '자료 없음' — '장벽 없음'(전부 0)과 다르므로 0 으로 채우지 않는다.
+  final List<int>? ac;
+
   const NodeInfo(this.fullName, this.shortName, this.line, this.op, this.region,
-      this.addr, this.lat, this.lon, this.demand, this.transfer);
+      this.addr, this.lat, this.lon, this.demand, this.transfer, this.ac);
 }
 
 class PathResult {
@@ -170,6 +175,7 @@ class RailGraph {
               (n['lo'] as num).toDouble(),
               (n['d'] as num).toInt(),
               (n['x'] as num).toInt(),
+              (n['ac'] as List?)?.map((v) => (v as num).toInt()).toList(),
             ))
         .toList(growable: false);
 
@@ -585,6 +591,17 @@ class RailGraph {
     if (members.length < 5) return null;
     final arts = articulationPoints(members);
     return RegionFragility(region, members.length, arts.length, arts.length / members.length, arts);
+  }
+
+  /// 노드 집합의 승강장 접근성 요약 — 자료가 있는 노드 중 위험도 최대치.
+  /// 웹판 app.js accOf() 와 같은 규칙: 자료가 하나도 없으면 null.
+  List<int>? accOf(Iterable<int> nodeIdxs) {
+    List<int>? best;
+    for (final i in nodeIdxs) {
+      final a = nodes[i].ac;
+      if (a != null && (best == null || a[0] > best[0])) best = a;
+    }
+    return best;
   }
 
   /// 이름으로 역 찾기(권역 우선, 표기 변형 허용)

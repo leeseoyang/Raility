@@ -1,7 +1,8 @@
 /// Raility 디자인 토큰
 ///
-/// 채도는 노선 고유색과 위험 단계에만 허용한다. 나머지는 무채색 잉크 스케일로 눌러
-/// 데이터가 먼저 읽히게 한다. 웹판 app.css 와 같은 값이다.
+/// Apple iOS UI Kit(figma community/1247769024068708989) 문법을 따른다.
+/// systemGroupedBackground 위 인셋 그룹 카드, 강조는 systemBlue 틴트 하나,
+/// 위험 단계는 iOS 시스템 팔레트(green/yellow/orange/red). 웹판 app.css 와 같은 값이다.
 library;
 
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/material.dart';
 class InkPalette {
   final Color i0, i1, i2, i3, i4, i5, i6, i7;
   final Color line, lineStrong, bg, surface, surface2;
+  final Color tint, tintBg;
   final Color risk0, risk1, risk2, risk3;
   final Color risk1Bg, risk2Bg, risk3Bg;
   const InkPalette({
@@ -16,26 +18,31 @@ class InkPalette {
     required this.i4, required this.i5, required this.i6, required this.i7,
     required this.line, required this.lineStrong,
     required this.bg, required this.surface, required this.surface2,
+    required this.tint, required this.tintBg,
     required this.risk0, required this.risk1, required this.risk2, required this.risk3,
     required this.risk1Bg, required this.risk2Bg, required this.risk3Bg,
   });
 
+  /// iOS Light — label/separator 는 시스템 알파값 그대로
   static const light = InkPalette(
-    i0: Color(0xFF0C0E11), i1: Color(0xFF1B1F26), i2: Color(0xFF3D454F), i3: Color(0xFF6B7480),
-    i4: Color(0xFF98A1AC), i5: Color(0xFFC9CFD6), i6: Color(0xFFE4E8EC), i7: Color(0xFFF1F4F6),
-    line: Color(0xFFE2E6EA), lineStrong: Color(0xFFCFD5DB),
-    bg: Color(0xFFFBFCFD), surface: Colors.white, surface2: Color(0xFFF6F8F9),
-    risk0: Color(0xFF5B6572), risk1: Color(0xFF8A7A3E), risk2: Color(0xFFB4681D), risk3: Color(0xFFA32B1F),
-    risk1Bg: Color(0xFFFAF8EE), risk2Bg: Color(0xFFFDF5EC), risk3Bg: Color(0xFFFDF0EE),
+    i0: Color(0xFF000000), i1: Color(0xEB000000), i2: Color(0xC73C3C43), i3: Color(0x993C3C43),
+    i4: Color(0x6B3C3C43), i5: Color(0x3D3C3C43), i6: Color(0x29787880), i7: Color(0x1A787880),
+    line: Color(0x243C3C43), lineStrong: Color(0x3D3C3C43),
+    bg: Color(0xFFF2F2F7), surface: Colors.white, surface2: Color(0x14787880),
+    tint: Color(0xFF007AFF), tintBg: Color(0x1F007AFF),
+    risk0: Color(0xFF34C759), risk1: Color(0xFFD6A900), risk2: Color(0xFFFF9500), risk3: Color(0xFFFF3B30),
+    risk1Bg: Color(0x29FFCC00), risk2Bg: Color(0x21FF9500), risk3Bg: Color(0x1FFF3B30),
   );
 
+  /// iOS Dark — 순검정 배경 + #1C1C1E 카드
   static const dark = InkPalette(
-    i0: Color(0xFFF2F5F7), i1: Color(0xFFE2E7EC), i2: Color(0xFFB9C1CB), i3: Color(0xFF8B95A1),
-    i4: Color(0xFF69737F), i5: Color(0xFF404853), i6: Color(0xFF2A313A), i7: Color(0xFF1D232B),
-    line: Color(0xFF252C35), lineStrong: Color(0xFF333B45),
-    bg: Color(0xFF0D1116), surface: Color(0xFF141920), surface2: Color(0xFF1A2029),
-    risk0: Color(0xFF9AA4B0), risk1: Color(0xFFD0BC6A), risk2: Color(0xFFE0954A), risk3: Color(0xFFE9705C),
-    risk1Bg: Color(0xFF232116), risk2Bg: Color(0xFF271F16), risk3Bg: Color(0xFF2A1A19),
+    i0: Color(0xFFFFFFFF), i1: Color(0xEBFFFFFF), i2: Color(0xB8EBEBF5), i3: Color(0x99EBEBF5),
+    i4: Color(0x61EBEBF5), i5: Color(0x38EBEBF5), i6: Color(0x52787880), i7: Color(0x33787880),
+    line: Color(0x80545458), lineStrong: Color(0xB8545458),
+    bg: Color(0xFF000000), surface: Color(0xFF1C1C1E), surface2: Color(0x2E787880),
+    tint: Color(0xFF0A84FF), tintBg: Color(0x330A84FF),
+    risk0: Color(0xFF30D158), risk1: Color(0xFFE5C33B), risk2: Color(0xFFFF9F0A), risk3: Color(0xFFFF453A),
+    risk1Bg: Color(0x29FFD60A), risk2Bg: Color(0x2EFF9F0A), risk3Bg: Color(0x33FF453A),
   );
 }
 
@@ -65,15 +72,15 @@ ThemeData buildTheme(Brightness b) {
     scaffoldBackgroundColor: ink.bg,
     fontFamily: family,
     colorScheme: ColorScheme.fromSeed(
-      seedColor: ink.risk3,
+      seedColor: ink.tint,
       brightness: b,
       surface: ink.surface,
     ),
     splashFactory: InkSparkle.splashFactory,
     textTheme: TextTheme(
-      bodyMedium: TextStyle(color: ink.i1, fontSize: 15, height: 1.5),
-      bodySmall: TextStyle(color: ink.i3, fontSize: 12.5, height: 1.6),
-      titleMedium: TextStyle(color: ink.i0, fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: -0.3),
+      bodyMedium: TextStyle(color: ink.i1, fontSize: 15, height: 1.47),
+      bodySmall: TextStyle(color: ink.i3, fontSize: 13, height: 1.55),
+      titleMedium: TextStyle(color: ink.i0, fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.3),
     ),
   );
 }
@@ -93,6 +100,9 @@ const gradeText = <String, List<String>>{
   'D': ['취약', '대부분의 역이 끊기면 우회할 수 없습니다.'],
   'E': ['매우 취약', '사실상 모든 중간역이 단일고장점입니다. 대체 경로가 없습니다.'],
 };
+
+/// 승강장 장벽 라벨 — ac[1..3] 순서와 일치 (웹판 ACC_LABEL 과 동일)
+const accLabels = ['안전발판 없음', '승강장 미연결', '스크린도어 없음'];
 
 String comma(num n) => n.round().toString().replaceAllMapped(
     RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');

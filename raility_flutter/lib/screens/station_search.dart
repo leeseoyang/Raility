@@ -92,7 +92,7 @@ class _SearchSheetState extends State<_SearchSheet> {
               ),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: Text('닫기', style: TextStyle(fontSize: 13, color: ink.i3, fontWeight: FontWeight.w600)),
+                child: Text('닫기', style: TextStyle(fontSize: 15, color: ink.tint)),
               ),
             ]),
           ),
@@ -110,18 +110,11 @@ class _SearchSheetState extends State<_SearchSheet> {
                 prefixIcon: Icon(Icons.search, size: 19, color: ink.i4),
                 filled: true,
                 fillColor: ink.surface2,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                // iOS 검색 필드: 테두리 없이 채움색만
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: BorderSide(color: ink.line),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: BorderSide(color: ink.line),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(11),
-                  borderSide: BorderSide(color: ink.lineStrong),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
                 ),
               ),
             ),

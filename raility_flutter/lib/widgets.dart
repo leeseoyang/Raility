@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'state.dart';
 import 'theme.dart';
 
-/// 섹션 제목 (작은 대문자 느낌의 라벨)
+/// 섹션 제목 (iOS 그룹 리스트 섹션 헤더)
 class Eyebrow extends StatelessWidget {
   final String text;
   final EdgeInsets? padding;
@@ -13,15 +13,14 @@ class Eyebrow extends StatelessWidget {
   Widget build(BuildContext context) {
     final ink = Palette.of(context);
     return Padding(
-      padding: padding ?? const EdgeInsets.fromLTRB(16, 26, 16, 9),
+      padding: padding ?? const EdgeInsets.fromLTRB(20, 26, 16, 8),
       child: Text(text,
-          style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.0, color: ink.i4)),
+          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink.i3)),
     );
   }
 }
 
-/// 테두리 있는 카드 (그림자 대신 얇은 선을 쓴다)
+/// 인셋 그룹 카드 (iOS: 테두리 없이 배경 대비 + 10pt 라운드)
 class Panel extends StatelessWidget {
   final Widget child;
   final EdgeInsets? padding, margin;
@@ -35,8 +34,7 @@ class Panel extends StatelessWidget {
       padding: padding,
       decoration: BoxDecoration(
         color: ink.surface,
-        border: Border.all(color: ink.line),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
       ),
       clipBehavior: Clip.antiAlias,
       child: child,
@@ -58,11 +56,16 @@ class RowTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ink = Palette.of(context);
+    // iOS 리스트 규격: 구분선은 왼쪽 16pt 인셋, 두께 0.5
     return InkWell(
       onTap: onTap,
       child: Container(
-        decoration: divider ? BoxDecoration(border: Border(top: BorderSide(color: ink.line))) : null,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        decoration: divider
+            ? BoxDecoration(
+                border: Border(top: BorderSide(color: ink.line, width: 0.5)))
+            : null,
+        margin: divider ? const EdgeInsets.only(left: 16) : null,
+        padding: EdgeInsets.fromLTRB(divider ? 0 : 16, 12, 16, 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -171,13 +174,16 @@ Future<void> showStationSheet(BuildContext context, int si) {
     final im = g.impact[n];
     if (im != null && (best == null || im[0] > best[0])) best = im;
   }
+  final ac = g.accOf(s.nodes);
+  final barriers =
+      ac == null ? null : [for (var k = 0; k < 3; k++) if (ac[k + 1] != 0) accLabels[k]];
 
   return showModalBottomSheet(
     context: context,
     backgroundColor: ink.surface,
     showDragHandle: true,
     shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(14))),
     builder: (ctx) => SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -187,7 +193,7 @@ Future<void> showStationSheet(BuildContext context, int si) {
           children: [
             Text(s.name,
                 style: TextStyle(
-                    fontSize: 24, fontWeight: FontWeight.w800, color: ink.i0, letterSpacing: -0.7)),
+                    fontSize: 28, fontWeight: FontWeight.w700, color: ink.i0, letterSpacing: -0.8)),
             const SizedBox(height: 5),
             Wrap(spacing: 6, children: [
               Text('${s.region} ·', style: TextStyle(fontSize: 13, color: ink.i3)),
@@ -202,6 +208,15 @@ Future<void> showStationSheet(BuildContext context, int si) {
               _kv(ink, '제거 시 효율 저하', '${best[0].toStringAsFixed(2)}%'),
               _kv(ink, '제거 시 고립 역 수', best[2] > 0 ? '${best[2]}개' : '없음'),
             ],
+            _kv(
+                ink,
+                '승강장 장벽',
+                barriers == null
+                    ? '정보 미공개 노선'
+                    : barriers.isEmpty
+                        ? '확인된 장벽 없음'
+                        : barriers.join(' · ')),
+            if (ac != null && ac[4] > 0) _kv(ink, '승강장 층', '지하/지상 ${ac[4]}층'),
             if (s.addr.isNotEmpty) _kv(ink, '주소', s.addr),
           ],
         ),

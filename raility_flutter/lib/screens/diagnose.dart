@@ -137,6 +137,7 @@ class DiagnoseScreen extends StatelessWidget {
               '${r.maxDelta > 0 ? ' 가장 불리한 경우에도 ${mins(r.maxDelta)}분만 더 걸립니다.' : ''}'
           : '중간역 ${r.mids.length}개 중 ${r.spof.length}개가 멈추면 이 경로로는 목적지에 갈 수 없습니다.'
               '${r.detour.isNotEmpty ? ' 나머지 ${r.detour.length}개 역은 우회 시 최대 ${mins(r.maxDelta)}분이 더 걸립니다.' : ''}'),
+      ..._accessibility(context, g, r),
       const Eyebrow('경로 상세'),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -167,6 +168,67 @@ class DiagnoseScreen extends StatelessWidget {
       ],
       Note('역 ${g.stations.length}개, 구간 ${g.edges.length}개 그래프에서 '
           '경로 위의 역을 하나씩 제거하고 다시 탐색해 산출했습니다.'),
+    ];
+  }
+
+  /// 교통약자 관점 — 경로 위 승강장 장벽 집계 (웹판 acc-card 와 동일한 규칙)
+  List<Widget> _accessibility(BuildContext context, RailGraph g, Diagnosis r) {
+    final ink = Palette.of(context);
+    final counts = [0, 0, 0];
+    var noData = 0;
+    for (final st in r.stops) {
+      final ac = g.accOf(st.nodes);
+      if (ac == null) {
+        noData++;
+        continue;
+      }
+      for (var k = 0; k < 3; k++) {
+        if (ac[k + 1] != 0) counts[k]++;
+      }
+    }
+    if (counts[0] + counts[1] + counts[2] + noData == 0) return const [];
+
+    const icons = [Icons.accessible, Icons.link_off, Icons.door_sliding_outlined];
+    Widget row(IconData icon, Color iconBg, String label, int n, {bool divider = false}) =>
+        Container(
+          decoration: divider
+              ? BoxDecoration(border: Border(top: BorderSide(color: ink.line, width: 0.5)))
+              : null,
+          margin: divider ? const EdgeInsets.only(left: 16) : null,
+          padding: EdgeInsets.fromLTRB(divider ? 0 : 16, 11, 16, 11),
+          child: Row(children: [
+            Container(
+              width: 28, height: 28,
+              decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(7)),
+              child: Icon(icon, size: 17, color: Colors.white),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text('$label 역',
+                    style: TextStyle(fontSize: 14.5, color: ink.i1, letterSpacing: -0.15))),
+            Text('$n',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w600, color: ink.i0,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            Text('개', style: TextStyle(fontSize: 12, color: ink.i3)),
+          ]),
+        );
+
+    final rows = <Widget>[];
+    for (var k = 0; k < 3; k++) {
+      if (counts[k] > 0) {
+        rows.add(row(icons[k], ink.risk2, accLabels[k], counts[k], divider: rows.isNotEmpty));
+      }
+    }
+    if (noData > 0) {
+      rows.add(row(Icons.help_outline, ink.i4, '승강장 정보 미공개', noData, divider: rows.isNotEmpty));
+    }
+
+    return [
+      const Eyebrow('교통약자 관점'),
+      Panel(child: Column(children: rows)),
+      const Note('국가철도공단 승강장 정보 기준. 안전발판이 없으면 휠체어·유아차 단독 승하차가 어렵고, '
+          '승강장이 미연결이면 반대 방향으로 가려면 개찰구를 나가야 합니다.'),
     ];
   }
 
@@ -217,7 +279,7 @@ class _OdCard extends StatelessWidget {
             Container(
               width: 9, height: 9,
               decoration: BoxDecoration(
-                  color: isFrom ? ink.i2 : ink.risk3, shape: BoxShape.circle),
+                  color: isFrom ? ink.tint : ink.risk3, shape: BoxShape.circle),
             ),
             const SizedBox(width: 11),
             SizedBox(
@@ -259,14 +321,14 @@ class _OdCard extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(right: 30),
           child: Material(
-            color: ink.surface,
-            shape: CircleBorder(side: BorderSide(color: ink.lineStrong)),
+            color: ink.surface2,
+            shape: const CircleBorder(),
             child: InkWell(
               customBorder: const CircleBorder(),
               onTap: app.swap,
               child: SizedBox(
-                  width: 34, height: 34,
-                  child: Icon(Icons.swap_vert, size: 17, color: ink.i3)),
+                  width: 32, height: 32,
+                  child: Icon(Icons.swap_vert, size: 17, color: ink.tint)),
             ),
           ),
         ),
@@ -351,12 +413,27 @@ class _RouteStrip extends StatelessWidget {
                                 fontSize: 11.5, fontWeight: FontWeight.w600, color: lineColor)),
                       ),
                     ]),
-                    if (st.transferHere && st.fromLine != null && st.toLine != null)
-                      _tag(ink, '${st.fromLine} → ${st.toLine} 환승', ink.i3, ink.surface2),
-                    if (st.spof)
-                      _tag(ink, '이 역이 멈추면 우회 불가', ink.risk3, ink.risk3Bg, icon: Icons.warning_amber_rounded),
-                    if (!st.spof && st.delta > 60 && !sameRun)
-                      _tag(ink, '우회 시 +${mins(st.delta)}분', ink.risk2, ink.risk2Bg),
+                    // 태그는 가로로 흘려 붙인다. 승강장 장벽은 SPOF 와 별개 축이므로 병기한다.
+                    ...() {
+                      final ac = g.accOf(st.nodes);
+                      final tags = <Widget>[
+                        if (st.transferHere && st.fromLine != null && st.toLine != null)
+                          _tag(ink, '${st.fromLine} → ${st.toLine} 환승', ink.i3, ink.surface2),
+                        if (st.spof)
+                          _tag(ink, '이 역이 멈추면 우회 불가', ink.risk3, ink.risk3Bg,
+                              icon: Icons.warning_amber_rounded),
+                        if (ac == null)
+                          _tag(ink, '승강장 정보 없음', ink.i4, ink.surface2)
+                        else
+                          for (var k = 0; k < 3; k++)
+                            if (ac[k + 1] != 0) _tag(ink, accLabels[k], ink.risk2, ink.risk2Bg),
+                        if (!st.spof && st.delta > 60 && !sameRun)
+                          _tag(ink, '우회 시 +${mins(st.delta)}분', ink.risk2, ink.risk2Bg),
+                      ];
+                      return tags.isEmpty
+                          ? const <Widget>[]
+                          : [Wrap(spacing: 5, runSpacing: 0, children: tags)];
+                    }(),
                   ]),
                 ),
               ),

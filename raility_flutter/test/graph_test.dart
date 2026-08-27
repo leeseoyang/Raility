@@ -269,4 +269,42 @@ void main() {
       }
     });
   });
+
+  // 웹판 test_graph.js 의 '승강장 접근성' 절과 같은 기준
+  group('승강장 접근성', () {
+    test('접근성 자료 보유 노드 800개 이상', () {
+      expect(g.nodes.where((n) => n.ac != null).length, greaterThanOrEqualTo(800));
+    });
+    test('위험도 = 세 장벽 플래그의 합', () {
+      for (final n in g.nodes) {
+        final a = n.ac;
+        if (a == null) continue;
+        expect(a.length, 5);
+        expect(a[0], a[1] + a[2] + a[3]);
+      }
+    });
+    test('자료 없는 노선(9호선)은 ac 필드 자체가 없음', () {
+      final line9 = g.nodes.where((n) => n.line.contains('9호선')).toList();
+      expect(line9, isNotEmpty);
+      expect(line9.every((n) => n.ac == null), isTrue);
+    });
+    test('대전 1호선 전 노드 접근성 자료 보유', () {
+      final dj = g.nodes.where((n) => n.line == '대전 도시철도 1호선').toList();
+      expect(dj, isNotEmpty);
+      expect(dj.every((n) => n.ac != null), isTrue);
+    });
+    test('대전 안전발판 미설치 다수 (원본 80% 수준)', () {
+      final dj = g.nodes.where((n) => n.line == '대전 도시철도 1호선').toList();
+      final noPlate = dj.where((n) => n.ac![1] == 1).length;
+      expect(noPlate, greaterThanOrEqualTo((dj.length * 0.6).floor()));
+    });
+    test('accOf 는 자료 없음과 장벽 없음을 구분', () {
+      final none = g.nodes.indexWhere((n) => n.ac == null);
+      expect(g.accOf([none]), isNull);              // 자료 없음 → null
+      final zero = g.nodes.indexWhere((n) => n.ac != null && n.ac![0] == 0);
+      expect(g.accOf([zero]), isNotNull);           // 장벽 없음 → [0,...]
+      expect(g.accOf([zero])![0], 0);
+      expect(g.accOf([none, zero]), isNotNull);     // 혼합 → 자료 있는 쪽
+    });
+  });
 }

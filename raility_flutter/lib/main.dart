@@ -113,10 +113,10 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
               children: [
                 Text('Raility',
                     style: TextStyle(
-                        fontSize: 17, fontWeight: FontWeight.w800, color: ink.i0, letterSpacing: -0.4)),
+                        fontSize: 17, fontWeight: FontWeight.w600, color: ink.i0, letterSpacing: -0.4)),
                 const SizedBox(width: 9),
                 Text('도시철도 취약성 진단',
-                    style: TextStyle(fontSize: 11.5, color: ink.i4, height: 1)),
+                    style: TextStyle(fontSize: 12, color: ink.i3, height: 1)),
                 const Spacer(),
                 if (showRegion)
                   _RegionChip(
@@ -155,15 +155,15 @@ class _RegionChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
         decoration: BoxDecoration(
-          border: Border.all(color: ink.lineStrong),
+          color: ink.tintBg,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.place_outlined, size: 13, color: ink.i2),
+          Icon(Icons.place_outlined, size: 13, color: ink.tint),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: ink.i2)),
+          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: ink.tint)),
         ]),
       ),
     );
@@ -204,13 +204,13 @@ class _TabBar extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(on ? f : o, size: 22, color: on ? ink.i0 : ink.i4),
+                      Icon(on ? f : o, size: 22, color: on ? ink.tint : ink.i4),
                       const SizedBox(height: 3),
                       Text(label,
                           style: TextStyle(
                               fontSize: 10.5,
-                              fontWeight: FontWeight.w600,
-                              color: on ? ink.i0 : ink.i4)),
+                              fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+                              color: on ? ink.tint : ink.i4)),
                     ],
                   ),
                 ),
