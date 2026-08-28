@@ -199,6 +199,74 @@ if os.path.exists(p):
 
 summary = json.load(io.open(P("results", "summary.json"), encoding="utf-8"))
 
+# ── 빠른환승 (국토교통부, 차량순서·출입문) ──────────────────
+# 원본은 (운영기관, 노선명, 역명, 종착역명 → 환승선) 단위다. 노선명이 그래프
+# 노선명과 다르므로("경의중앙" vs "경의중앙선", 코레일 "1호선" vs 경부/경인선…)
+# 후보 집합으로 매핑해 앱에서 stop.fromLine/toLine 소속 검사로 조회한다.
+import re as _re
+import unicodedata as _ud
+
+def _norm(s):
+    s = _ud.normalize("NFC", str(s or ""))
+    s = _re.sub(r"\(.*?\)", "", s)
+    s = _re.sub(r"\s+", "", s)
+    return s[:-1] if s.endswith("역") and len(s) > 1 else s
+
+_KORAIL1 = ["경부선", "경인선", "경원선", "장항선"]
+_FT_LINE = {
+    ("코레일", "1호선"): _KORAIL1, ("코레일", "3호선"): ["일산선"],
+    ("코레일", "4호선"): ["안산과천선"], ("코레일", "경강"): ["경강선"],
+    ("코레일", "경의중앙"): ["경의중앙선", "경원선"], ("코레일", "경춘"): ["경춘선"],
+    ("코레일", "동해"): ["동해선"], ("코레일", "수인분당"): ["수인선", "분당선"],
+    ("공항철도주식회사", "공항철도"): ["인천국제공항선"],
+    ("네오트랜스주식회사", "신분당선"): ["신분당선"],
+    ("서울시메트로9호선주식회사", "9호선"): ["수도권  도시철도 9호선", "서울 도시철도 9호선"],
+    ("우이신설경전철주식회사", "우이신설"): ["우이신설선"],
+    ("의정부경량전철주식회사", "의정부경전철"): ["의정부"],
+    ("용인경량전철주식회사", "용인에버라인"): ["에버라인"],
+    ("부산김해경전철주식회사", "부산김해경전철"): ["부산김해경전철"],
+    ("인천국제공항공사", "자기부상"): ["자기부상철도"],
+    ("인천교통공사", "인천1호선"): ["인천지하철 1호선"],
+    ("인천교통공사", "인천2호선"): ["인천지하철 2호선"],
+    ("인천교통공사", "7호선"): ["도시철도 7호선"],
+}
+for _i in range(1, 9):
+    _FT_LINE[("서울교통공사", "%d호선" % _i)] = ["%d호선" % _i]
+for _i in (1, 2, 3):
+    _FT_LINE[("대구교통공사", "%d호선" % _i)] = ["대구 도시철도 %d호선" % _i]
+    _FT_LINE[("부산교통공사", "%d호선" % _i)] = ["부산 도시철도 %d호선" % _i]
+_FT_LINE[("부산교통공사", "4호선")] = ["부산 경량도시철도 4호선"]
+_FT_REGION = {"대구교통공사": "대구", "부산교통공사": "부산", "부산김해경전철주식회사": "부산"}
+
+FT = {}
+_ft_path = P("data", "raw", "빠른환승", "국토교통부_철도역_빠른환승정보_20251113.csv")
+_ft_n = _ft_skip = 0
+if os.path.exists(_ft_path):
+    with io.open(_ft_path, encoding="cp949", newline="") as f:
+        for r in csv.DictReader(f):
+            op = (r.get("철도운영기관명") or "").strip()
+            ln = (r.get("노선명") or "").strip()
+            st = _norm(r.get("역명"))
+            xop = (r.get("환승철도운영기관명") or "").strip()
+            xln = (r.get("환승선") or "").strip()
+            car = (r.get("차량순서") or "").strip()
+            door = (r.get("차량출입문번호") or "").strip()
+            fr = _FT_LINE.get((op, ln))
+            to = _FT_LINE.get((xop, xln))
+            if not (st and fr and to and car and door):
+                _ft_skip += 1
+                continue
+            reg = _FT_REGION.get(op, "수도권")
+            key = reg + "|" + st
+            # [탈때노선 후보, 갈아탈노선 후보, 종착방면, 칸, 문, 환승이후역]
+            # 환승이후역 = 갈아탄 뒤 첫 역. 경로의 다음 정차역과 직접 매칭돼
+            # 새 노선의 방향(2호선 내선/외선 등)을 구분한다.
+            FT.setdefault(key, []).append(
+                [fr, to, _norm(r.get("종착역명")), int(car), int(door),
+                 _norm(r.get("환승이후역명"))])
+            _ft_n += 1
+print("빠른환승: 채택 %d · 매핑불가 %d · 역 %d곳" % (_ft_n, _ft_skip, len(FT)))
+
 # 노선색(기존 앱에서 추출한 실제 노선 고유색)
 COLORS = {}
 cp = P("raility_app", "assets", "_linecolors.json")
@@ -211,7 +279,7 @@ for n in N:                              # 누락 노선 기본색
 bundle = {
     "nodes": N, "edges": E, "impact": IMPACT,
     "seg": SEG, "prio": PRIO, "summary": summary,
-    "colors": COLORS, "transferSec": TRANSFER_SEC,
+    "colors": COLORS, "transferSec": TRANSFER_SEC, "ft": FT,
 }
 
 out = P("raility_app", "assets", "data.js")

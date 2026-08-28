@@ -193,6 +193,13 @@ button { background:none; border:0; padding:0; cursor:pointer; -webkit-tap-highl
   background:var(--surface-2); border-radius:6px; padding:3px 7px;
   display:inline-flex; margin-top:6px; margin-right:5px;
 }
+/* 빠른환승 칸-문 안내 */
+.ft-tag {
+  font-size:11.5px; font-weight:600; color:var(--tint);
+  background:var(--tint-bg); border-radius:6px; padding:3px 7px;
+  display:inline-flex; margin-top:6px; margin-right:5px;
+  font-variant-numeric:tabular-nums;
+}
 
 /* ── 리스트/행 (인셋 그룹) ────────────────────────── */
 .rows { border:0; border-radius:var(--r-l); background:var(--surface); overflow:hidden; }

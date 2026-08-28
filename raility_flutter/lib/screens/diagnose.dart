@@ -416,9 +416,18 @@ class _RouteStrip extends StatelessWidget {
                     // 태그는 가로로 흘려 붙인다. 승강장 장벽은 SPOF 와 별개 축이므로 병기한다.
                     ...() {
                       final ac = g.accOf(st.nodes);
+                      final ftr = st.transferHere ? g.fastTransferAt(result, i) : null;
                       final tags = <Widget>[
                         if (st.transferHere && st.fromLine != null && st.toLine != null)
                           _tag(ink, '${st.fromLine} → ${st.toLine} 환승', ink.i3, ink.surface2),
+                        if (ftr != null)
+                          _tag(
+                              ink,
+                              '빠른 환승 ${ftr.list.map((x) => '${x.car}-${x.door}'
+                                  // 종착역명 결측 레코드는 방면 라벨 없이 칸-문만
+                                  '${ftr.resolved || x.dir.isEmpty ? '' : ' (${x.dir} 방면)'}').join(' · ')}',
+                              ink.tint,
+                              ink.tintBg),
                         if (st.spof)
                           _tag(ink, '이 역이 멈추면 우회 불가', ink.risk3, ink.risk3Bg,
                               icon: Icons.warning_amber_rounded),

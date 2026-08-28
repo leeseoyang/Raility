@@ -298,6 +298,30 @@ void main() {
       final noPlate = dj.where((n) => n.ac![1] == 1).length;
       expect(noPlate, greaterThanOrEqualTo((dj.length * 0.6).floor()));
     });
+    test('빠른환승 데이터 100역 이상 · 칸/문 범위', () {
+      expect(g.ft.length, greaterThanOrEqualTo(100));
+      for (final recs in g.ft.values) {
+        for (final rec in recs) {
+          final car = (rec[3] as num).toInt(), door = (rec[4] as num).toInt();
+          expect(car, inInclusiveRange(1, 10));
+          expect(door, inInclusiveRange(1, 4));
+        }
+      }
+    });
+    test('소사→강남 환승역에 빠른환승 안내 존재 · 비환승역은 null', () {
+      final r = g.diagnose(g.lookup('소사', '수도권')!, g.lookup('강남', '수도권')!);
+      var hits = 0;
+      for (var i = 0; i < r.stops.length; i++) {
+        final f = g.fastTransferAt(r, i);
+        if (!r.stops[i].transferHere) {
+          expect(f, isNull);
+        } else if (f != null) {
+          hits++;
+          expect(f.list, isNotEmpty);
+        }
+      }
+      expect(hits, greaterThanOrEqualTo(1));
+    });
     test('accOf 는 자료 없음과 장벽 없음을 구분', () {
       final none = g.nodes.indexWhere((n) => n.ac == null);
       expect(g.accOf([none]), isNull);              // 자료 없음 → null

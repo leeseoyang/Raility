@@ -397,6 +397,15 @@ function renderStrip(r) {
 
     if (st.transferHere && st.fromLine && st.toLine) {
       body.appendChild(el('span', 'xfer-note', st.fromLine + ' → ' + st.toLine + ' 환승'));
+      // 빠른환승: 내리는 열차의 몇 번째 칸·문이 환승 통로와 가장 가까운가
+      var ft = G.fastTransferAt(r, i);
+      if (ft) {
+        var txt = ft.list.map(function (x) {
+          // 종착역명 결측 레코드는 방면 라벨 없이 칸-문만 표시한다
+          return x.car + '-' + x.door + (ft.resolved || !x.dir ? '' : ' (' + x.dir + ' 방면)');
+        }).join(' · ');
+        body.appendChild(el('span', 'ft-tag', '빠른 환승 ' + txt));
+      }
     }
 
     if (st.spof) {
@@ -755,6 +764,8 @@ function renderData() {
     ['국가철도공단_전국 도시철도 운행정보', '열차 운행 순서·소요시간·운행 횟수'],
     ['국가철도공단_노선별 역간거리', '구간 실측 거리 (18개 노선)'],
     ['국가철도공단_노선별 환승정보', '환승 연결 관계 (15개 기관)'],
+    ['국가철도공단_노선별 승강장 정보', '역층·승강장연결·스크린도어·안전발판 (30개 노선, 5개 권역)'],
+    ['국토교통부_철도역 빠른 환승 정보', '환승 통로와 가장 가까운 차량순서(칸)·출입문 (103개 환승역)'],
     ['각 도시철도 운영기관_역별 승하차실적', '역별 일평균 이용 규모']
   ].forEach(function (s) {
     var it = el('div', 'src-item');

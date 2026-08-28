@@ -348,11 +348,98 @@ function regionFragility(region) {
            ratio: arts.length / members.length, stations: arts };
 }
 
+/* ── 빠른환승 (국토교통부 차량순서·출입문) ─────────────────────
+ * NET.ft: { "권역|역명": [[탈때노선 후보, 갈아탈노선 후보, 종착방면, 칸, 문], ...] }
+ * 같은 환승쌍에 상·하행 두 레코드가 있으므로 진행 방향을 판정해야 한다.
+ * 직전 역 P 에서 탄 열차는 S 를 지나 P 반대쪽으로 간다. 따라서 그 열차의 종착역 T 는
+ * "같은 노선 부분그래프에서 P→T 최단경로가 S 를 지난다" — 홉수로 dP[T] = dP[S] + dS[T]. */
+function pnorm(s) {
+  s = String(s || '').normalize('NFC').replace(/\(.*?\)/g, '').replace(/\s+/g, '');
+  return s.length > 1 && s.charAt(s.length - 1) === '역' ? s.slice(0, -1) : s;
+}
+function bfsLineHops(start, lineSet) {
+  // lineSet: 같은 운행 계통으로 취급할 노선 집합. 코레일 1호선처럼 한 계통이
+  // 여러 그래프 노선(경부·경인·경원·장항)으로 갈라져 있어 단일 노선으로는
+  // 종착역(소요산 등)에 닿지 못한다.
+  function onLine(si) {
+    var ls = STATIONS[si].lines;
+    for (var k = 0; k < ls.length; k++) if (lineSet.indexOf(ls[k]) >= 0) return true;
+    return false;
+  }
+  var dist = {}; dist[start] = 0;
+  var q = [start];
+  while (q.length) {
+    var u = q.shift();
+    STA_ADJ[u].forEach(function (v) {
+      if (dist[v] !== undefined) return;
+      if (!onLine(v)) return;
+      dist[v] = dist[u] + 1;
+      q.push(v);
+    });
+  }
+  return dist;
+}
+function fastTransferAt(r, i) {
+  var st = r.stops[i];
+  if (!st.transferHere || !st.fromLine || !st.toLine) return null;
+  var s = STATIONS[st.sta];
+  var recs = ((NET.ft || {})[s.region + '|' + pnorm(s.name)] || []).filter(function (rec) {
+    return rec[0].indexOf(st.fromLine) >= 0 && rec[1].indexOf(st.toLine) >= 0;
+  });
+  if (!recs.length) return null;
+
+  // 새 노선의 방향: 환승이후역(rec[5]) = 갈아탄 뒤 첫 역 = 경로의 다음 정차역
+  if (i + 1 < r.stops.length) {
+    var nextShort = pnorm(STATIONS[r.stops[i + 1].sta].name);
+    var byNext = recs.filter(function (rec) { return rec[5] === nextShort; });
+    if (byNext.length) recs = byNext;
+  }
+
+  var resolved = recs.length === 1;
+  if (!resolved && i > 0) {
+    // 계통 노선 집합 = 매칭된 레코드들의 '탈때노선 후보' 합집합
+    var lineSet = [];
+    recs.forEach(function (rec) {
+      rec[0].forEach(function (l) { if (lineSet.indexOf(l) < 0) lineSet.push(l); });
+    });
+    var dS = bfsLineHops(st.sta, lineSet);
+    var dP = bfsLineHops(r.stops[i - 1].sta, lineSet);
+    var byShort = {};
+    STATIONS.forEach(function (x, xi) {
+      if (x.region !== s.region) return;
+      for (var k = 0; k < x.lines.length; k++) {
+        if (lineSet.indexOf(x.lines[k]) >= 0) { byShort[pnorm(x.name)] = xi; return; }
+      }
+    });
+    // 각 레코드를 앞/뒤/불명으로 분류한다. 종착역명이 결측(10.5%)이면 불명.
+    var ahead = [], unknown = [];
+    recs.forEach(function (rec) {
+      var t = byShort[rec[2]];
+      if (t === undefined || dP[t] === undefined || dS[t] === undefined) { unknown.push(rec); return; }
+      if (dP[t] === (dP[st.sta] || 1) + dS[t]) ahead.push(rec);
+      // 나머지는 진행 방향 뒤 → 탈락
+    });
+    if (ahead.length) {
+      ahead.sort(function (a, b) { return (dS[byShort[a[2]]] || 9e9) - (dS[byShort[b[2]]] || 9e9); });
+      recs = [ahead[0]];
+      resolved = true;
+    } else if (unknown.length === 1) {
+      // 방향이 확인된 레코드가 전부 '뒤'라면, 남은 불명 하나가 진행 방향이다(소거법).
+      recs = unknown;
+      resolved = true;
+    }
+  }
+  return {
+    resolved: resolved,
+    list: recs.slice(0, 2).map(function (rec) { return { dir: rec[2], car: rec[3], door: rec[4] }; })
+  };
+}
+
 root.RailGraph = {
   STA_ADJ: STA_ADJ, articulationPoints: articulationPoints, regionFragility: regionFragility,
   NODES: NODES, EDGES: EDGES, ADJ: ADJ,
   STATIONS: STATIONS, STA_OF: STA_OF,
-  shortest: shortest, toStops: toStops, diagnose: diagnose
+  shortest: shortest, toStops: toStops, diagnose: diagnose, fastTransferAt: fastTransferAt
 };
 
 })(typeof window !== 'undefined' ? window : globalThis);

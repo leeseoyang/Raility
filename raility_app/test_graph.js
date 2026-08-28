@@ -262,5 +262,31 @@ ok('대전 1호선 전 노드 접근성 자료 보유', djAc.length === dj.lengt
 ok('대전 안전발판 미설치 다수 (원본 80% 수준)', djNoPlate.length >= dj.length * 0.6,
    djNoPlate.length + '/' + dj.length);
 
+/* ── 12. 빠른환승 (차량순서·출입문) ─────────────────── */
+hdr('빠른환승');
+var ftKeys = Object.keys(NET.ft || {});
+ok('빠른환승 데이터 100역 이상', ftKeys.length >= 100, ftKeys.length + '역');
+var ftBad = 0;
+ftKeys.forEach(function (k) {
+  NET.ft[k].forEach(function (rec) {
+    if (!(rec[3] >= 1 && rec[3] <= 10 && rec[4] >= 1 && rec[4] <= 4)) ftBad++;
+  });
+});
+ok('칸 1~10 · 문 1~4 범위', ftBad === 0, ftBad + '건 이탈');
+var sosa2 = find('소사', '수도권'), gn2 = find('강남', '수도권');
+var dft = G.diagnose(sosa2, gn2);
+var ftHits = 0, ftUnresolved = 0;
+dft.stops.forEach(function (st, i) {
+  var f = G.fastTransferAt(dft, i);
+  if (f) { ftHits++; if (!f.resolved) ftUnresolved++; }
+});
+ok('소사→강남 환승역에 빠른환승 안내 존재', ftHits >= 1, ftHits + '곳');
+ok('방향 판정으로 대부분 단일 안내', ftUnresolved <= ftHits, ftUnresolved + '곳 미해결');
+// 비환승 정차역에서는 null (환승 아닌 곳에 안내가 붙으면 안 된다)
+var ftFalse = dft.stops.filter(function (st, i) {
+  return !st.transferHere && G.fastTransferAt(dft, i) !== null;
+}).length;
+ok('비환승 역에는 안내 없음', ftFalse === 0, ftFalse + '건');
+
 console.log('\n' + (fail === 0 ? '전부 통과' : fail + '건 실패') + '  (통과 ' + pass + ' / 실패 ' + fail + ')');
 process.exit(fail ? 1 : 0);

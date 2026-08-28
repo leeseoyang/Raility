@@ -94,6 +94,19 @@ class RegionFragility {
   const RegionFragility(this.region, this.total, this.cuts, this.ratio, this.stations);
 }
 
+/// 빠른환승 한 건 — 내리는 열차의 몇 번째 칸(car)·문(door)이 환승 통로와 가장 가까운가
+class FastTransfer {
+  final String dir; // 탄 열차의 종착 방면
+  final int car, door;
+  const FastTransfer(this.dir, this.car, this.door);
+}
+
+class FastTransferResult {
+  final bool resolved; // 진행 방향이 판정돼 단일 안내인가
+  final List<FastTransfer> list;
+  const FastTransferResult(this.resolved, this.list);
+}
+
 /// 우선순위 큐 (최소 힙)
 class _MinHeap {
   final List<double> _k = [];
@@ -155,6 +168,9 @@ class RailGraph {
   late final List<List<num>> seg;            // [edgeIndex, eff, demandEff, cut, size]
   late final int transferSec;
 
+  /// "권역|역명" -> [[탈때노선 후보, 갈아탈노선 후보, 종착방면, 칸, 문], ...]
+  late final Map<String, List<List<dynamic>>> ft;
+
   // 다익스트라 작업 버퍼 (재할당 비용 회피)
   late final Float64List _dist;
   late final Int32List _prev;
@@ -194,6 +210,11 @@ class RailGraph {
     seg = ((j['seg'] as List?) ?? [])
         .map((r) => (r as List).map((x) => x as num).toList())
         .toList();
+
+    ft = {};
+    (j['ft'] as Map?)?.forEach((k, v) {
+      ft[k as String] = (v as List).map((r) => r as List<dynamic>).toList();
+    });
 
     _buildAdjacency();
     _buildStations();
@@ -591,6 +612,100 @@ class RailGraph {
     if (members.length < 5) return null;
     final arts = articulationPoints(members);
     return RegionFragility(region, members.length, arts.length, arts.length / members.length, arts);
+  }
+
+  /// 빠른환승 이름 정규화 (괄호·공백 제거, 끝의 '역' 절단 — 번들 생성기와 동일)
+  static String _pnorm(String s) {
+    var t = s.replaceAll(RegExp(r'\(.*?\)'), '').replaceAll(RegExp(r'\s+'), '');
+    return t.length > 1 && t.endsWith('역') ? t.substring(0, t.length - 1) : t;
+  }
+
+  /// 노선 계통 집합으로 제한한 역 단위 BFS 홉수. 코레일 1호선처럼 한 계통이
+  /// 여러 그래프 노선(경부·경인·경원·장항)으로 갈라져 있어 단일 노선으로는
+  /// 종착역에 닿지 못하므로 집합으로 걷는다.
+  Map<int, int> _bfsLineHops(int start, Set<String> lineSet) {
+    bool onLine(int si) => stations[si].lines.any(lineSet.contains);
+    final dist = <int, int>{start: 0};
+    final q = <int>[start];
+    var head = 0;
+    while (head < q.length) {
+      final u = q[head++];
+      for (final v in staAdj[u]) {
+        if (dist.containsKey(v) || !onLine(v)) continue;
+        dist[v] = dist[u]! + 1;
+        q.add(v);
+      }
+    }
+    return dist;
+  }
+
+  /// 경로 [r] 의 [i]번째 정차역이 환승이면 빠른환승(칸-문) 안내를 돌려준다.
+  ///
+  /// 같은 환승쌍에 상·하행 두 레코드가 있으므로 진행 방향을 판정한다:
+  /// 직전 역 P 에서 탄 열차는 S 를 지나 P 반대쪽으로 가므로, 그 열차의 종착역 T 는
+  /// 같은 계통 부분그래프에서 dP[T] == dP[S] + dS[T] 를 만족한다.
+  FastTransferResult? fastTransferAt(Diagnosis r, int i) {
+    final st = r.stops[i];
+    if (!st.transferHere || st.fromLine == null || st.toLine == null) return null;
+    final s = stations[st.station];
+    final all = ft['${s.region}|${_pnorm(s.name)}'];
+    if (all == null) return null;
+    var recs = all.where((rec) {
+      return (rec[0] as List).contains(st.fromLine) && (rec[1] as List).contains(st.toLine);
+    }).toList();
+    if (recs.isEmpty) return null;
+
+    // 새 노선의 방향: 환승이후역(rec[5]) = 갈아탄 뒤 첫 역 = 경로의 다음 정차역
+    if (i + 1 < r.stops.length) {
+      final nextShort = _pnorm(stations[r.stops[i + 1].station].name);
+      final byNext = recs.where((rec) => rec[5] as String == nextShort).toList();
+      if (byNext.isNotEmpty) recs = byNext;
+    }
+
+    var resolved = recs.length == 1;
+    if (!resolved && i > 0) {
+      final lineSet = <String>{};
+      for (final rec in recs) {
+        lineSet.addAll((rec[0] as List).cast<String>());
+      }
+      final dS = _bfsLineHops(st.station, lineSet);
+      final dP = _bfsLineHops(r.stops[i - 1].station, lineSet);
+      final byShort = <String, int>{};
+      for (var xi = 0; xi < stations.length; xi++) {
+        final x = stations[xi];
+        if (x.region == s.region && x.lines.any(lineSet.contains)) {
+          byShort.putIfAbsent(_pnorm(x.name), () => xi);
+        }
+      }
+      // 각 레코드를 앞/뒤/불명으로 분류. 종착역명 결측(10.5%)이면 불명.
+      final ahead = <List<dynamic>>[], unknown = <List<dynamic>>[];
+      for (final rec in recs) {
+        final t = byShort[rec[2] as String];
+        if (t == null || !dP.containsKey(t) || !dS.containsKey(t)) {
+          unknown.add(rec);
+        } else if (dP[t] == (dP[st.station] ?? 1) + dS[t]!) {
+          ahead.add(rec);
+        } // 나머지는 진행 방향 뒤 → 탈락
+      }
+      if (ahead.isNotEmpty) {
+        ahead.sort((a, b) => (dS[byShort[a[2] as String]] ?? 1 << 30)
+            .compareTo(dS[byShort[b[2] as String]] ?? 1 << 30));
+        recs = [ahead.first];
+        resolved = true;
+      } else if (unknown.length == 1) {
+        // 방향이 확인된 레코드가 전부 '뒤'라면 남은 불명 하나가 진행 방향(소거법)
+        recs = unknown;
+        resolved = true;
+      }
+    }
+    return FastTransferResult(
+      resolved,
+      recs
+          .take(2)
+          .map((rec) => FastTransfer(
+              rec[2] as String, (rec[3] as num).toInt(), (rec[4] as num).toInt()))
+          .toList(),
+    );
   }
 
   /// 노드 집합의 승강장 접근성 요약 — 자료가 있는 노드 중 위험도 최대치.
