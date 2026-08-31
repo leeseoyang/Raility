@@ -1,5 +1,5 @@
-/* Raility service worker — 전체 오프라인 동작 */
-var CACHE = 'raility-v1';
+/* Raility service worker — 앱 셸 오프라인 동작 (지도 타일 제외) */
+var CACHE = 'raility-v2';
 var ASSETS = [
   './', './index.html',
   './assets/app.css', './assets/app.js', './assets/graph.js', './assets/data.js',
@@ -19,6 +19,8 @@ self.addEventListener('activate', function (e) {
 
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  // 지도 타일 등 외부 요청은 캐시하지 않는다 — 캐시가 무한정 부풀고 갱신도 어색해진다.
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request).then(function (hit) {
       return hit || fetch(e.request).then(function (res) {

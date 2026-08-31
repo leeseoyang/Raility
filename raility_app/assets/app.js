@@ -533,25 +533,69 @@ function renderMap() {
   if (!idxs.length) { host.appendChild(el('div', 'empty-hint', '표시할 역이 없습니다.')); return; }
 
   var W = host.clientWidth || 360, H = host.clientHeight || 420, PAD = 26;
-  var laMin = Infinity, laMax = -Infinity, loMin = Infinity, loMax = -Infinity;
+
+  // 좌표계: 웹 메르카토르 (실제 지도 타일과 같은 투영이어야 노선이 타일 위에 겹친다)
+  function mercX(lo) { return (lo + 180) / 360 * 256; }
+  function mercY(la) {
+    var r = la * Math.PI / 180;
+    return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 256;
+  }
+  var xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
   idxs.forEach(function (i) {
-    var n = NODES[i];
-    if (n.la < laMin) laMin = n.la; if (n.la > laMax) laMax = n.la;
-    if (n.lo < loMin) loMin = n.lo; if (n.lo > loMax) loMax = n.lo;
+    var x = mercX(NODES[i].lo), y = mercY(NODES[i].la);
+    if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+    if (y < yMin) yMin = y; if (y > yMax) yMax = y;
   });
-  // 위도에 따른 경도 축소 보정
-  var midLa = (laMin + laMax) / 2, kx = Math.cos(midLa * Math.PI / 180);
-  var spanX = (loMax - loMin) * kx, spanY = (laMax - laMin);
-  var sc = Math.min((W - PAD * 2) / (spanX || 1e-6), (H - PAD * 2) / (spanY || 1e-6));
-  var offX = (W - spanX * sc) / 2, offY = (H - spanY * sc) / 2;
-  function px(n) { return offX + (n.lo - loMin) * kx * sc; }
-  function py(n) { return offY + (laMax - n.la) * sc; }
+  var sc = Math.min((W - PAD * 2) / ((xMax - xMin) || 1e-6),
+                    (H - PAD * 2) / ((yMax - yMin) || 1e-6));
+  var offX = (W - (xMax - xMin) * sc) / 2, offY = (H - (yMax - yMin) * sc) / 2;
+  function px(n) { return offX + (mercX(n.lo) - xMin) * sc; }
+  function py(n) { return offY + (mercY(n.la) - yMin) * sc; }
+
+  host.style.position = 'relative';
+  host.style.overflow = 'hidden';
+
+  // ── 실제 지도 타일 (CARTO 라이트/다크, 라이브러리 없이 직접 그린다) ──
+  var tilePane = el('div');
+  tilePane.style.cssText = 'position:absolute;inset:0;transform-origin:0 0;pointer-events:none;';
+  host.appendChild(tilePane);
+  var dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+  var TILE_URL = 'https://basemaps.cartocdn.com/' + (dark ? 'dark_all' : 'light_all') + '/';
+
+  function syncTiles() {
+    var ke = sc * mapView.k;                          // 현재 유효 배율 (world px → 화면 px)
+    var z = Math.max(3, Math.min(18, Math.round(Math.log(ke) / Math.LN2)));
+    var f = Math.pow(2, z);
+    // 화면 → 기준(팬/줌 이전) 좌표 → 월드 → 타일 번호
+    function baseX(SX) { return ((SX - mapView.x) / mapView.k - offX) / sc + xMin; }
+    function baseY(SY) { return ((SY - mapView.y) / mapView.k - offY) / sc + yMin; }
+    var tx0 = Math.floor(baseX(0) * f / 256), tx1 = Math.floor(baseX(W) * f / 256);
+    var ty0 = Math.floor(baseY(0) * f / 256), ty1 = Math.floor(baseY(H) * f / 256);
+    var maxT = f - 1;
+    tilePane.innerHTML = '';
+    for (var ty = Math.max(0, ty0); ty <= Math.min(maxT, ty1); ty++) {
+      for (var tx = Math.max(0, tx0); tx <= Math.min(maxT, tx1); tx++) {
+        var img = document.createElement('img');
+        img.src = TILE_URL + z + '/' + tx + '/' + ty + '@2x.png';
+        img.alt = '';
+        img.decoding = 'async';
+        // 타일 모서리를 기준 화면 좌표로 — 팬/줌은 pane transform 이 함께 처리한다
+        var sx = offX + (tx * 256 / f - xMin) * sc;
+        var sy = offY + (ty * 256 / f - yMin) * sc;
+        var sw = 256 / f * sc;
+        img.style.cssText = 'position:absolute;left:' + sx + 'px;top:' + sy +
+          'px;width:' + sw + 'px;height:' + sw + 'px;';
+        tilePane.appendChild(img);
+      }
+    }
+  }
 
   var NS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
   svg.style.display = 'block'; svg.style.touchAction = 'none';
+  svg.style.position = 'relative';
   var g = document.createElementNS(NS, 'g');
   svg.appendChild(g);
 
@@ -609,9 +653,18 @@ function renderMap() {
 
   host.appendChild(svg);
 
-  // 팬/줌
+  // 팬/줌 — 타일 pane 과 SVG <g> 에 같은 변환을 건다
   mapView = { k: 1, x: 0, y: 0 };
-  function apply() { g.setAttribute('transform', 'translate(' + mapView.x + ',' + mapView.y + ') scale(' + mapView.k + ')'); }
+  function apply() {
+    var t = 'translate(' + mapView.x + 'px,' + mapView.y + 'px) scale(' + mapView.k + ')';
+    g.setAttribute('transform', 'translate(' + mapView.x + ',' + mapView.y + ') scale(' + mapView.k + ')');
+    tilePane.style.transform = t;
+  }
+  var tileTimer = null;
+  function scheduleTiles() {                 // 제스처가 끝나면 현재 배율에 맞는 타일로 교체
+    if (tileTimer) clearTimeout(tileTimer);
+    tileTimer = setTimeout(syncTiles, 180);
+  }
   var pts = {};
   var startDist = 0, startK = 1, last = null;
   svg.addEventListener('pointerdown', function (e) { svg.setPointerCapture(e.pointerId); pts[e.pointerId] = { x: e.clientX, y: e.clientY }; last = { x: e.clientX, y: e.clientY }; startK = mapView.k; startDist = pinch(); });
@@ -627,24 +680,27 @@ function renderMap() {
       last = { x: e.clientX, y: e.clientY }; apply();
     }
   });
-  function endPt(e) { delete pts[e.pointerId]; last = null; startDist = pinch(); startK = mapView.k; }
+  function endPt(e) { delete pts[e.pointerId]; last = null; startDist = pinch(); startK = mapView.k; scheduleTiles(); }
   svg.addEventListener('pointerup', endPt);
   svg.addEventListener('pointercancel', endPt);
   svg.addEventListener('wheel', function (e) {
     e.preventDefault();
     mapView.k = Math.max(0.6, Math.min(9, mapView.k * (e.deltaY < 0 ? 1.12 : 0.89))); apply();
+    scheduleTiles();
   }, { passive: false });
   function pinch() {
     var ids = Object.keys(pts); if (ids.length < 2) return 0;
     var a = pts[ids[0]], b = pts[ids[1]];
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
+  syncTiles();
 
   // 통계 줄
   var cuts = 0;
   EDGES.forEach(function (e, ei) { if (inSet[e[0]] && inSet[e[1]] && segBy[ei] && segBy[ei][3] === 1) cuts++; });
   $('#mapStat').innerHTML = '역 <b class="num">' + Object.keys(drawn).length + '</b>개 · ' +
-    '단절 유발 구간 <b class="num">' + cuts + '</b>개';
+    '단절 유발 구간 <b class="num">' + cuts + '</b>개' +
+    '<span style="float:right;color:var(--ink-4)">© CARTO · OSM</span>';
 }
 
 function showMapTip(si) { openStation(si); }
@@ -801,7 +857,8 @@ function renderData() {
 
   var f = el('p', 'note');
   f.style.margin = '18px 2px 0';
-  f.textContent = '모든 계산은 사용자의 기기에서 수행되며, 어떤 정보도 외부로 전송되지 않습니다.';
+  f.textContent = '모든 계산은 사용자의 기기에서 수행되며, 어떤 정보도 외부로 전송되지 않습니다. ' +
+    '지도 배경 타일(CARTO·OSM)만 네트워크를 사용합니다.';
   host.appendChild(f);
 }
 
