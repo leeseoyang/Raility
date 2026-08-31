@@ -90,7 +90,19 @@ class DiagnoseScreen extends StatelessWidget {
       ];
     }
 
+    // 결론 한 문장이 먼저다. 등급 설명은 보조로 내린다. (웹판과 동일한 규칙)
     final gt = gradeText[r.grade]!;
+    final String headline;
+    var sub = gt[0];
+    if (r.spof.isEmpty) {
+      headline = '어느 역이 멈춰도 돌아갈 길이 있습니다';
+      if (r.maxDelta > 0) sub += ' · 우회 시 최대 +${mins(r.maxDelta)}분';
+    } else if (r.spof.length == r.mids.length) {
+      headline = '중간역 ${r.mids.length}개 전부 — 하나만 멈춰도 갈 수 없습니다';
+    } else {
+      headline = '중간역 ${r.mids.length}개 중 ${r.spof.length}개는 멈추면 우회가 없습니다';
+      if (r.detour.isNotEmpty) sub += ' · 나머지는 우회 시 최대 +${mins(r.maxDelta)}분';
+    }
     return [
       const SizedBox(height: 14),
       Panel(
@@ -100,26 +112,27 @@ class DiagnoseScreen extends StatelessWidget {
             Container(
               width: 56, height: 56,
               decoration: BoxDecoration(
-                  color: gradeColor(ink, r.grade), borderRadius: BorderRadius.circular(14)),
+                  color: gradeColor(ink, r.grade), borderRadius: BorderRadius.circular(13)),
               alignment: Alignment.center,
               child: Text(r.grade,
                   style: const TextStyle(
-                      fontSize: 26, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.8)),
+                      fontSize: 26, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: -0.8)),
             ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(gt[0],
+                Text(headline,
                     style: TextStyle(
-                        fontSize: 17, fontWeight: FontWeight.w700, color: ink.i0, letterSpacing: -0.3)),
+                        fontSize: 16.5, fontWeight: FontWeight.w700, color: ink.i0,
+                        letterSpacing: -0.3, height: 1.3)),
                 const SizedBox(height: 4),
-                Text(gt[1], style: TextStyle(fontSize: 13, color: ink.i3, height: 1.55)),
+                Text(sub, style: TextStyle(fontSize: 13, color: ink.i3, height: 1.5)),
               ]),
             ),
           ]),
           const SizedBox(height: 16),
           Container(
-            decoration: BoxDecoration(border: Border(top: BorderSide(color: ink.line))),
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: ink.line, width: 0.5))),
             child: IntrinsicHeight(
               child: Row(children: [
                 _metric(ink, '소요시간', '${mins(r.base!.time)}', '분'),
@@ -132,11 +145,6 @@ class DiagnoseScreen extends StatelessWidget {
           ),
         ]),
       ),
-      Note(r.spof.isEmpty
-          ? '이 경로의 중간역 ${r.mids.length}개는 모두 우회 가능합니다.'
-              '${r.maxDelta > 0 ? ' 가장 불리한 경우에도 ${mins(r.maxDelta)}분만 더 걸립니다.' : ''}'
-          : '중간역 ${r.mids.length}개 중 ${r.spof.length}개가 멈추면 이 경로로는 목적지에 갈 수 없습니다.'
-              '${r.detour.isNotEmpty ? ' 나머지 ${r.detour.length}개 역은 우회 시 최대 ${mins(r.maxDelta)}분이 더 걸립니다.' : ''}'),
       ..._accessibility(context, g, r),
       const Eyebrow('경로 상세'),
       Padding(
@@ -171,64 +179,29 @@ class DiagnoseScreen extends StatelessWidget {
     ];
   }
 
-  /// 교통약자 관점 — 경로 위 승강장 장벽 집계 (웹판 acc-card 와 동일한 규칙)
+  /// 교통약자 관점 — 기본은 한 줄 요약, 탭하면 상세 (웹판 acc-fold 와 동일한 규칙)
   List<Widget> _accessibility(BuildContext context, RailGraph g, Diagnosis r) {
-    final ink = Palette.of(context);
     final counts = [0, 0, 0];
-    var noData = 0;
+    var noData = 0, barrierStations = 0;
     for (final st in r.stops) {
       final ac = g.accOf(st.nodes);
       if (ac == null) {
         noData++;
         continue;
       }
+      var any = false;
       for (var k = 0; k < 3; k++) {
-        if (ac[k + 1] != 0) counts[k]++;
+        if (ac[k + 1] != 0) {
+          counts[k]++;
+          any = true;
+        }
       }
+      if (any) barrierStations++;
     }
-    if (counts[0] + counts[1] + counts[2] + noData == 0) return const [];
-
-    const icons = [Icons.accessible, Icons.link_off, Icons.door_sliding_outlined];
-    Widget row(IconData icon, Color iconBg, String label, int n, {bool divider = false}) =>
-        Container(
-          decoration: divider
-              ? BoxDecoration(border: Border(top: BorderSide(color: ink.line, width: 0.5)))
-              : null,
-          margin: divider ? const EdgeInsets.only(left: 16) : null,
-          padding: EdgeInsets.fromLTRB(divider ? 0 : 16, 11, 16, 11),
-          child: Row(children: [
-            Container(
-              width: 28, height: 28,
-              decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(7)),
-              child: Icon(icon, size: 17, color: Colors.white),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-                child: Text('$label 역',
-                    style: TextStyle(fontSize: 14.5, color: ink.i1, letterSpacing: -0.15))),
-            Text('$n',
-                style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w600, color: ink.i0,
-                    fontFeatures: const [FontFeature.tabularFigures()])),
-            Text('개', style: TextStyle(fontSize: 12, color: ink.i3)),
-          ]),
-        );
-
-    final rows = <Widget>[];
-    for (var k = 0; k < 3; k++) {
-      if (counts[k] > 0) {
-        rows.add(row(icons[k], ink.risk2, accLabels[k], counts[k], divider: rows.isNotEmpty));
-      }
-    }
-    if (noData > 0) {
-      rows.add(row(Icons.help_outline, ink.i4, '승강장 정보 미공개', noData, divider: rows.isNotEmpty));
-    }
-
+    if (barrierStations + noData == 0) return const [];
     return [
-      const Eyebrow('교통약자 관점'),
-      Panel(child: Column(children: rows)),
-      const Note('국가철도공단 승강장 정보 기준. 안전발판이 없으면 휠체어·유아차 단독 승하차가 어렵고, '
-          '승강장이 미연결이면 반대 방향으로 가려면 개찰구를 나가야 합니다.'),
+      const SizedBox(height: 10),
+      _AccFold(counts: counts, noData: noData, barrierStations: barrierStations),
     ];
   }
 
@@ -250,6 +223,91 @@ class DiagnoseScreen extends StatelessWidget {
       );
 
   Widget _divider(InkPalette ink) => Container(width: 1, color: ink.line, margin: const EdgeInsets.only(left: 14, right: 14));
+}
+
+/// 교통약자 요약 접이 카드 — 한 줄 요약, 탭하면 장벽별 상세
+class _AccFold extends StatefulWidget {
+  final List<int> counts;
+  final int noData, barrierStations;
+  const _AccFold({required this.counts, required this.noData, required this.barrierStations});
+
+  @override
+  State<_AccFold> createState() => _AccFoldState();
+}
+
+class _AccFoldState extends State<_AccFold> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Palette.of(context);
+    const icons = [Icons.accessible, Icons.link_off, Icons.door_sliding_outlined];
+
+    Widget iconBox(IconData icon, Color bg) => Container(
+          width: 28, height: 28,
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(7)),
+          child: Icon(icon, size: 17, color: Colors.white),
+        );
+
+    Widget detail(IconData icon, Color bg, String label, int n) => Container(
+          decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: ink.line, width: 0.5))),
+          margin: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.fromLTRB(0, 11, 16, 11),
+          child: Row(children: [
+            iconBox(icon, bg),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text('$label 역',
+                    style: TextStyle(fontSize: 14.5, color: ink.i1, letterSpacing: -0.15))),
+            Text('$n',
+                style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w600, color: ink.i0,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+            Text('개', style: TextStyle(fontSize: 12, color: ink.i3)),
+          ]),
+        );
+
+    return Panel(
+      child: Column(children: [
+        InkWell(
+          onTap: () => setState(() => _open = !_open),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            child: Row(children: [
+              iconBox(Icons.accessible, widget.barrierStations > 0 ? ink.risk2 : ink.i4),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                    widget.barrierStations > 0
+                        ? '교통약자 장벽이 있는 역 ${widget.barrierStations}개'
+                        : '교통약자 장벽 확인 안 됨 (정보 없음 ${widget.noData}개)',
+                    style: TextStyle(fontSize: 14.5, color: ink.i1, letterSpacing: -0.15)),
+              ),
+              AnimatedRotation(
+                turns: _open ? 0.25 : 0,
+                duration: const Duration(milliseconds: 160),
+                child: Icon(Icons.chevron_right, size: 19, color: ink.i4),
+              ),
+            ]),
+          ),
+        ),
+        if (_open) ...[
+          for (var k = 0; k < 3; k++)
+            if (widget.counts[k] > 0) detail(icons[k], ink.risk2, accLabels[k], widget.counts[k]),
+          if (widget.noData > 0)
+            detail(Icons.help_outline, ink.i4, '승강장 정보 미공개', widget.noData),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Text(
+                '국가철도공단 승강장 정보 기준. 안전발판이 없으면 휠체어·유아차 단독 승하차가 어렵고, '
+                '승강장이 미연결이면 반대 방향으로 가려면 개찰구를 나가야 합니다.',
+                style: TextStyle(fontSize: 12.5, color: ink.i3, height: 1.5)),
+          ),
+        ],
+      ]),
+    );
+  }
 }
 
 /// 출발/도착 선택 카드
@@ -394,6 +452,8 @@ class _RouteStrip extends StatelessWidget {
                           ? null
                           : Border(bottom: BorderSide(color: ink.line))),
                   padding: const EdgeInsets.symmetric(vertical: 9),
+                  // 태그 다이어트: 텍스트 태그 대신 이름 옆 작은 아이콘.
+                  // 상세는 역을 탭하면 시트에서 보여준다. (웹판과 동일한 규칙)
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
                       Flexible(
@@ -412,36 +472,37 @@ class _RouteStrip extends StatelessWidget {
                             style: TextStyle(
                                 fontSize: 11.5, fontWeight: FontWeight.w600, color: lineColor)),
                       ),
+                      if (st.spof) ...[
+                        const SizedBox(width: 6),
+                        Icon(Icons.warning_amber_rounded, size: 13, color: ink.risk3),
+                      ],
+                      if (() {
+                        final ac = g.accOf(st.nodes);
+                        return ac != null && (ac[1] != 0 || ac[2] != 0 || ac[3] != 0);
+                      }()) ...[
+                        const SizedBox(width: 5),
+                        Icon(Icons.accessible, size: 13, color: ink.risk2),
+                      ],
                     ]),
-                    // 태그는 가로로 흘려 붙인다. 승강장 장벽은 SPOF 와 별개 축이므로 병기한다.
                     ...() {
-                      final ac = g.accOf(st.nodes);
                       final ftr = st.transferHere ? g.fastTransferAt(result, i) : null;
-                      final tags = <Widget>[
+                      return <Widget>[
                         if (st.transferHere && st.fromLine != null && st.toLine != null)
-                          _tag(ink, '${st.fromLine} → ${st.toLine} 환승', ink.i3, ink.surface2),
-                        if (ftr != null)
-                          _tag(
-                              ink,
-                              '빠른 환승 ${ftr.list.map((x) => '${x.car}-${x.door}'
-                                  // 종착역명 결측 레코드는 방면 라벨 없이 칸-문만
-                                  '${ftr.resolved || x.dir.isEmpty ? '' : ' (${x.dir} 방면)'}').join(' · ')}',
-                              ink.tint,
-                              ink.tintBg),
-                        if (st.spof)
-                          _tag(ink, '이 역이 멈추면 우회 불가', ink.risk3, ink.risk3Bg,
-                              icon: Icons.warning_amber_rounded),
-                        if (ac == null)
-                          _tag(ink, '승강장 정보 없음', ink.i4, ink.surface2)
-                        else
-                          for (var k = 0; k < 3; k++)
-                            if (ac[k + 1] != 0) _tag(ink, accLabels[k], ink.risk2, ink.risk2Bg),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                                '${st.fromLine} → ${st.toLine} 환승'
+                                '${ftr != null ? ' · 빠른 환승 ${ftr.list.map((x) => '${x.car}-${x.door}'
+                                    '${ftr.resolved || x.dir.isEmpty ? '' : ' (${x.dir} 방면)'}').join(' · ')}' : ''}',
+                                style: TextStyle(fontSize: 12, color: ink.i4)),
+                          ),
                         if (!st.spof && st.delta > 60 && !sameRun)
-                          _tag(ink, '우회 시 +${mins(st.delta)}분', ink.risk2, ink.risk2Bg),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text('우회 시 +${mins(st.delta)}분',
+                                style: TextStyle(fontSize: 12, color: ink.i4)),
+                          ),
                       ];
-                      return tags.isEmpty
-                          ? const <Widget>[]
-                          : [Wrap(spacing: 5, runSpacing: 0, children: tags)];
                     }(),
                   ]),
                 ),
@@ -453,15 +514,4 @@ class _RouteStrip extends StatelessWidget {
     );
   }
 
-  Widget _tag(InkPalette ink, String text, Color fg, Color bg, {IconData? icon}) => Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (icon != null) ...[Icon(icon, size: 12, color: fg), const SizedBox(width: 4)],
-            Text(text, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: fg)),
-          ]),
-        ),
-      );
 }
