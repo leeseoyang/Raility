@@ -248,6 +248,9 @@ function toStops(path) {
   return stops;
 }
 
+/** 실질적 단절 상한: 우회가 이보다 오래 걸리면 사실상 못 가는 것으로 본다. */
+var PRACTICAL_CAP_S = 1800;
+
 /** 경로 위 중간역을 하나씩 제거해 우회 가능 여부를 판정한다. */
 function diagnose(srcSta, dstSta) {
   var base = shortest(srcSta, dstSta, null);
@@ -255,22 +258,30 @@ function diagnose(srcSta, dstSta) {
 
   var stops = toStops(base.path);
   var mids = stops.slice(1, -1);
-  var spof = [], detour = [], maxDelta = 0;
+  var spof = [], practical = [], detour = [], maxDelta = 0;
 
   mids.forEach(function (st) {
     var alt = shortest(srcSta, dstSta, st.sta);
-    if (!alt) { st.spof = true; spof.push(st); return; }
+    if (!alt) { st.spof = true; st.practical = true; spof.push(st); practical.push(st); return; }
     st.delta = alt.time - base.time;
     st.altTime = alt.time;
+    // 실질적 단절: 경로가 남아도 +30분 이상이거나 원 소요시간의 2배를 넘으면
+    // 통근자에겐 단절과 같다. (45분 우회와 3분 우회를 같은 등급으로 치지 않기 위함)
+    if (st.delta > PRACTICAL_CAP_S || st.delta > base.time) {
+      st.practical = true; practical.push(st);
+    }
     if (st.delta > 60) { detour.push(st); if (st.delta > maxDelta) maxDelta = st.delta; }
   });
 
-  var ratio = mids.length ? spof.length / mids.length : 0;
+  // 등급은 '실질적 단절' 비율로 매긴다. 중간역이 적은 짧은 경로는 비율이 널뛰므로
+  // 라플라스 평활(α=1)로 누른다. 단절이 하나도 없으면 평활 없이 A.
+  var ratio = practical.length === 0 ? 0
+    : (practical.length + 1) / (mids.length + 2);
   var grade = ratio === 0 ? 'A' : ratio <= 0.15 ? 'B' : ratio <= 0.4 ? 'C' : ratio <= 0.75 ? 'D' : 'E';
 
   return {
     ok: true, base: base, stops: stops, mids: mids,
-    spof: spof, detour: detour, maxDelta: maxDelta, ratio: ratio, grade: grade,
+    spof: spof, practical: practical, detour: detour, maxDelta: maxDelta, ratio: ratio, grade: grade,
     transfers: stops.filter(function (s) { return s.transferHere; }).length,
     lines: stops.map(function (s) { return s.rideLine; })
       .filter(function (l, i, a) { return l && a.indexOf(l) === i; })
@@ -438,7 +449,7 @@ function fastTransferAt(r, i) {
 root.RailGraph = {
   STA_ADJ: STA_ADJ, articulationPoints: articulationPoints, regionFragility: regionFragility,
   NODES: NODES, EDGES: EDGES, ADJ: ADJ,
-  STATIONS: STATIONS, STA_OF: STA_OF,
+  STATIONS: STATIONS, STA_OF: STA_OF, PRACTICAL_CAP_S: PRACTICAL_CAP_S,
   shortest: shortest, toStops: toStops, diagnose: diagnose, fastTransferAt: fastTransferAt
 };
 

@@ -260,16 +260,23 @@ function runDiagnose() {
   }
 
   // 결론 한 문장이 먼저다. 등급 설명은 보조로 내린다.
+  // '실질적 단절' = 경로 소멸 또는 +30분(원 소요시간 2배) 초과 우회. 등급도 이 기준이다.
   var gt = GRADE_TEXT[r.grade];
+  var np = (r.practical || r.spof).length;
   var headline, sub = gt[0];
-  if (r.spof.length === 0) {
+  if (np === 0) {
     headline = '어느 역이 멈춰도 돌아갈 길이 있습니다';
     if (r.maxDelta > 0) sub += ' · 우회 시 최대 +' + mins(r.maxDelta) + '분';
-  } else if (r.spof.length === r.mids.length) {
-    headline = '중간역 ' + r.mids.length + '개 전부 — 하나만 멈춰도 갈 수 없습니다';
+  } else if (np === r.mids.length) {
+    headline = r.spof.length === r.mids.length
+      ? '중간역 ' + r.mids.length + '개 전부 — 하나만 멈춰도 갈 수 없습니다'
+      : '중간역 ' + r.mids.length + '개 전부 — 멈추면 사실상 갈 수 없습니다';
   } else {
-    headline = '중간역 ' + r.mids.length + '개 중 ' + r.spof.length + '개는 멈추면 우회가 없습니다';
+    headline = '중간역 ' + r.mids.length + '개 중 ' + np + '개는 멈추면 사실상 갈 수 없습니다';
     if (r.detour.length) sub += ' · 나머지는 우회 시 최대 +' + mins(r.maxDelta) + '분';
+  }
+  if (np > r.spof.length) {
+    sub += ' · 우회 불가 ' + r.spof.length + '개 + 30분 초과 우회 ' + (np - r.spof.length) + '개';
   }
   var v = el('div', 'verdict');
   v.innerHTML =
@@ -347,12 +354,18 @@ function runDiagnose() {
   out.appendChild(sectionTitle('경로 상세'));
   out.appendChild(renderStrip(r));
 
-  // 우선 대비 역
-  if (r.spof.length) {
+  // 우선 대비 역 — 사회적 취약도 S = 영향 통행량 × 우회 지연(상한 30분) 순.
+  // 순수 SPOF 는 지연을 상한으로 치므로 수요 순, 30분 초과 우회역은 수요×지연으로 섞인다.
+  var prac = r.practical || r.spof;
+  if (prac.length) {
     out.appendChild(sectionTitle('먼저 대비해야 할 역'));
     var rows = el('div', 'rows');
-    r.spof.slice()
-      .sort(function (a, b) { return STATIONS[b.sta].demand - STATIONS[a.sta].demand; })
+    function social(st) {
+      var d = st.spof ? G.PRACTICAL_CAP_S : Math.min(st.delta || 0, G.PRACTICAL_CAP_S);
+      return STATIONS[st.sta].demand * d;
+    }
+    prac.slice()
+      .sort(function (a, b) { return social(b) - social(a); })
       .slice(0, 6)
       .forEach(function (st, k) {
         var s = STATIONS[st.sta];
@@ -360,7 +373,8 @@ function runDiagnose() {
         b.appendChild(el('div', 'row-rank', String(k + 1)));
         var m = el('div', 'row-main');
         m.appendChild(el('div', 'row-name', s.name));
-        m.appendChild(el('div', 'row-sub', s.lines.join(', ')));
+        m.appendChild(el('div', 'row-sub',
+          s.lines.join(', ') + (st.spof ? ' · 우회 불가' : ' · 우회 +' + mins(st.delta) + '분')));
         b.appendChild(m);
         var val = el('div', 'row-val');
         val.innerHTML = '<span class="num">' + comma(s.demand) + '</span><small>일평균 승하차</small>';
@@ -712,47 +726,53 @@ function showMapTip(si) { openStation(si); }
  * 10. 대전 뷰
  * ───────────────────────────────────────────────────────────── */
 
-function renderDaejeon() {
+function renderDaejeon() {   // 탭 이름은 '권역 진단' — 내부 식별자는 딥링크 호환을 위해 유지
   var host = $('#viewDaejeon');
   host.innerHTML = '';
+  var reg = state.panelRegion || (REGIONS.indexOf(state.region) >= 0 ? state.region : '수도권');
+  if (REGIONS.indexOf(reg) < 0) reg = '수도권';
+  state.panelRegion = reg;
 
-  var dj = [];
-  STATIONS.forEach(function (s, i) { if (s.region === '대전') dj.push(i); });
-
-  // 종점 두 곳을 찾아 그 사이 경로의 SPOF를 계산한다.
-  var deg = {};
-  dj.forEach(function (si) {
-    var d = 0;
-    STATIONS[si].nodes.forEach(function (n) { d += ADJ[n].filter(function (e) { return e.type === 0; }).length; });
-    deg[si] = d;
+  // ── 권역 선택 칩 ──
+  host.appendChild(sectionTitle('권역 진단'));
+  var bar = el('div', 'segbar');
+  REGIONS.forEach(function (r0) {
+    if (r0 === '기타') return;
+    var b = el('button', 'seg-btn', r0);
+    b.setAttribute('aria-pressed', String(r0 === reg));
+    b.onclick = function () { state.panelRegion = r0; renderDaejeon(); };
+    bar.appendChild(b);
   });
-  var ends = dj.filter(function (si) { return deg[si] <= 1; });
-  var a = ends[0] != null ? ends[0] : dj[0], b = ends[1] != null ? ends[1] : dj[dj.length - 1];
-  var r = diagnose(a, b);
+  host.appendChild(bar);
 
-  var lead = el('div', 'stat-lead');
-  var pct = r.ok && r.mids.length ? Math.round(r.spof.length / r.mids.length * 100) : 0;
-  lead.innerHTML =
-    '<div class="big num">' + pct + '<i>%</i></div>' +
-    '<div class="cap">대전 도시철도 1호선 <b>' + esc(STATIONS[a].name) + ' → ' + esc(STATIONS[b].name) + '</b> 전 구간에서, ' +
-    '중간역 ' + (r.ok ? r.mids.length : 0) + '개 중 <b>' + (r.ok ? r.spof.length : 0) + '개</b>가 ' +
-    '멈추면 우회 경로가 존재하지 않습니다.</div>';
-  host.appendChild(lead);
+  // ── 히어로: 이 권역의 절점 비율 ──
+  var frag = G.regionFragility(reg);
+  if (frag) {
+    var lead = el('div', 'stat-lead');
+    lead.style.marginTop = '10px';
+    lead.innerHTML =
+      '<div class="big num">' + Math.round(frag.ratio * 100) + '<i>%</i></div>' +
+      '<div class="cap">' + esc(reg) + ' 역 ' + frag.total + '개 중 <b>' + frag.cuts + '개</b>는 ' +
+      '그 역 하나가 멈추면 철도망이 둘 이상으로 쪼개지는 <b>절점</b>입니다.</div>';
+    host.appendChild(lead);
+  }
 
-  var co = el('div', 'callout');
-  co.style.marginTop = '12px';
-  co.innerHTML = '대전은 운영 중인 도시철도가 <b>1호선 단일 노선</b>입니다. ' +
-    '망에 순환이나 병렬 경로가 없어 중간역 어느 하나가 끊기면 그 지점을 우회할 방법이 구조적으로 없습니다. ' +
-    '수도권처럼 노선이 겹치는 곳에서는 같은 사고가 나도 다른 노선으로 돌아갈 수 있습니다.';
-  host.appendChild(co);
+  if (reg === '대전') {
+    var co = el('div', 'callout');
+    co.style.marginTop = '12px';
+    co.innerHTML = '대전은 운영 중인 도시철도가 <b>1호선 단일 노선</b>입니다. ' +
+      '망에 순환이나 병렬 경로가 없어 중간역 어느 하나가 끊기면 우회할 방법이 구조적으로 없습니다. ' +
+      '2호선(트램) 개통 시 이 지표의 변화가 곧 투자 효과의 정량적 근거가 됩니다.';
+    host.appendChild(co);
+  }
 
-  // 권역 비교 — 절점(제거하면 망이 분리되는 역) 비율
+  // ── 권역 비교 — 절점 비율 ──
   host.appendChild(sectionTitle('권역별 구조적 취약도'));
   var rows = el('div', 'rows');
   var comp = [];
-  REGIONS.forEach(function (reg) {
-    if (reg === '기타') return;
-    var f = G.regionFragility(reg);
+  REGIONS.forEach(function (r0) {
+    if (r0 === '기타') return;
+    var f = G.regionFragility(r0);
     if (f) comp.push(f);
   });
   comp.sort(function (x, y) { return y.ratio - x.ratio; });
@@ -763,10 +783,10 @@ function renderDaejeon() {
     m.appendChild(el('div', 'row-name', c.region));
     m.appendChild(el('div', 'row-sub', '역 ' + c.total + '개 중 절점 ' + c.cuts + '개'));
     var g = el('div', 'gauge');
-    var bar = el('i');
-    bar.style.width = Math.max(3, pctv) + '%';
-    bar.style.background = pctv >= 75 ? 'var(--risk-3)' : pctv >= 40 ? 'var(--risk-2)' : 'var(--ink-3)';
-    g.appendChild(bar); m.appendChild(g);
+    var barEl = el('i');
+    barEl.style.width = Math.max(3, pctv) + '%';
+    barEl.style.background = pctv >= 75 ? 'var(--risk-3)' : pctv >= 40 ? 'var(--risk-2)' : 'var(--ink-3)';
+    g.appendChild(barEl); m.appendChild(g);
     row.appendChild(m);
     var v = el('div', 'row-val');
     v.innerHTML = '<span class="num">' + pctv + '%</span><small>절점 비율</small>';
@@ -776,22 +796,116 @@ function renderDaejeon() {
   host.appendChild(rows);
   var n1 = el('p', 'note'); n1.style.margin = '9px 2px 0';
   n1.innerHTML = '<b>절점</b>은 그 역을 빼면 철도망이 둘 이상으로 쪼개지는 역입니다. ' +
-    '비율이 높을수록 한 역의 사고가 망 전체를 끊을 가능성이 큽니다. ' +
-    '권역 전체 위상을 한 번에 계산한 값이라 특정 경로 선택에 좌우되지 않습니다.';
+    '비율이 높을수록 한 역의 사고가 망 전체를 끊을 가능성이 큽니다.';
   host.appendChild(n1);
 
-  // 대전 역별
-  host.appendChild(sectionTitle('대전 1호선 역별 이용 규모'));
+  // ── 수도권 스트레스 테스트 (분석 파이프라인 산출물 = 수도권 기준) ──
+  var sm = NET.summary || {};
+  if (reg === '수도권' && sm['복원력_adaptive_10%효율비율'] != null) {
+    host.appendChild(sectionTitle('역 10%가 멈추면 — 공격 전략별 잔존 효율'));
+    var strat = [
+      ['무작위 사고', sm['복원력_random_10%효율비율']],
+      ['매개중심성 순 표적', sm['복원력_betweenness_10%효율비율']],
+      ['연결 많은 역 순 표적', sm['복원력_degree_10%효율비율']],
+      ['적응적 표적(재계산)', sm['복원력_adaptive_10%효율비율']]
+    ].filter(function (x) { return x[1] != null; });
+    strat.sort(function (a, b) { return b[1] - a[1]; });
+    var rs = el('div', 'rows');
+    strat.forEach(function (x) {
+      var pct2 = Math.round(x[1] * 1000) / 10;
+      var row = el('div', 'row');
+      var m = el('div', 'row-main');
+      m.appendChild(el('div', 'row-name', x[0]));
+      var g2 = el('div', 'gauge');
+      var b2 = el('i');
+      b2.style.width = Math.max(3, pct2) + '%';
+      b2.style.background = pct2 < 30 ? 'var(--risk-3)' : pct2 < 50 ? 'var(--risk-2)' : 'var(--risk-0)';
+      g2.appendChild(b2); m.appendChild(g2);
+      row.appendChild(m);
+      var v2 = el('div', 'row-val');
+      v2.innerHTML = '<span class="num">' + pct2 + '%</span><small>잔존 효율</small>';
+      row.appendChild(v2);
+      rs.appendChild(row);
+    });
+    host.appendChild(rs);
+    var n3 = el('p', 'note'); n3.style.margin = '9px 2px 0';
+    var rnd = Math.round((sm['복원력_random_10%효율비율'] || 0) * 100);
+    var adp = Math.round((sm['복원력_adaptive_10%효율비율'] || 0) * 100);
+    n3.innerHTML = '무작위 사고로 역 10%가 멈추면 성능의 <b>' + rnd + '%</b>가 남지만, ' +
+      '매번 다시 계산해 가장 아픈 역만 노리면 <b>' + adp + '%</b>만 남습니다. ' +
+      '같은 규모의 고장이라도 <b>어디가 멈추느냐</b>가 결과를 가릅니다.';
+    host.appendChild(n3);
+
+    // 환승역 순차 마비 — "끊기지 않았다"와 "쓸 만하다"는 다르다
+    var par = sm['환승역_상위N_마비'] || [];
+    if (par.length) {
+      host.appendChild(sectionTitle('환승역이 이용객 순으로 마비되면'));
+      var rp = el('div', 'rows');
+      par.filter(function (p) { return [3, 10, 30].indexOf(p['제거환승역수']) >= 0; })
+        .forEach(function (p) {
+          var row = el('div', 'row');
+          var m = el('div', 'row-main');
+          m.appendChild(el('div', 'row-name', '환승역 ' + p['제거환승역수'] + '개 마비'));
+          m.appendChild(el('div', 'row-sub',
+            '망 연결성분 ' + Math.round(p['LCC비율'] * 100) + '% 유지 — 쪼개지진 않는다'));
+          row.appendChild(m);
+          var v3 = el('div', 'row-val');
+          v3.innerHTML = '<span class="num">-' + p['효율저하_%'] + '%</span><small>전역 효율</small>';
+          row.appendChild(v3);
+          rp.appendChild(row);
+        });
+      host.appendChild(rp);
+      var n4 = el('p', 'note'); n4.style.margin = '9px 2px 0';
+      n4.textContent = '환승역 30개가 마비돼도 망은 거의 쪼개지지 않지만 효율은 4분의 1 넘게 떨어집니다. ' +
+        '"끊기지 않았다"와 "쓸 만하다"는 다른 말입니다.';
+      host.appendChild(n4);
+    }
+
+    // NET.prio — 구조 취약성 × 실수요 교차로 뽑은 최우선 대비역
+    if (PRIO.length) {
+      host.appendChild(sectionTitle('최우선 대비 역 — 구조 취약 × 이용 수요'));
+      var rq = el('div', 'rows');
+      PRIO.slice(0, 7).forEach(function (p, k) {
+        var si = STA_OF[p[0]];
+        var s = STATIONS[si];
+        var btn = el('button', 'row');
+        btn.appendChild(el('div', 'row-rank', String(k + 1)));
+        var m = el('div', 'row-main');
+        m.appendChild(el('div', 'row-name', s.name));
+        m.appendChild(el('div', 'row-sub',
+          NODES[p[0]].l + (p[3] > 0 ? ' · 멈추면 ' + p[3] + '개 역 고립' : '')));
+        btn.appendChild(m);
+        var v4 = el('div', 'row-val');
+        v4.innerHTML = '<span class="num">' + p[2].toFixed(1) + '%</span><small>효율 저하</small>';
+        btn.appendChild(v4);
+        btn.onclick = function () { openStation(si); };
+        rq.appendChild(btn);
+      });
+      host.appendChild(rq);
+    }
+  } else if (reg !== '수도권') {
+    var n5 = el('p', 'note'); n5.style.margin = '14px 2px 0';
+    n5.textContent = '공격 전략별 복원력·환승역 마비·최우선 대비역 분석은 수도권 기준으로 산출되어 있습니다. ' +
+      '수도권을 선택하면 볼 수 있습니다.';
+    host.appendChild(n5);
+  }
+
+  // ── 이 권역 이용 규모 상위 역 ──
+  var mem = [];
+  STATIONS.forEach(function (s, i) { if (s.region === reg) mem.push(i); });
+  var arts = {};
+  if (frag) frag.stations.forEach(function (i) { arts[i] = 1; });
+  host.appendChild(sectionTitle(reg + ' 이용 규모 상위 역'));
   var rows2 = el('div', 'rows');
-  dj.slice().sort(function (x, y) { return STATIONS[y].demand - STATIONS[x].demand; })
+  mem.slice().sort(function (x, y) { return STATIONS[y].demand - STATIONS[x].demand; })
+    .slice(0, 10)
     .forEach(function (si, k) {
       var s = STATIONS[si];
-      var isSpof = r.ok && r.spof.some(function (st) { return st.sta === si; });
       var btn = el('button', 'row');
       btn.appendChild(el('div', 'row-rank', String(k + 1)));
       var m = el('div', 'row-main');
       m.appendChild(el('div', 'row-name', s.name));
-      m.appendChild(el('div', 'row-sub', isSpof ? '멈추면 노선이 양분됩니다' : '종점부'));
+      m.appendChild(el('div', 'row-sub', arts[si] ? '절점 — 멈추면 망이 쪼개집니다' : s.lines.join(', ')));
       btn.appendChild(m);
       var v = el('div', 'row-val');
       v.innerHTML = '<span class="num">' + comma(s.demand) + '</span><small>일평균</small>';
@@ -800,10 +914,6 @@ function renderDaejeon() {
       rows2.appendChild(btn);
     });
   host.appendChild(rows2);
-
-  var n2 = el('p', 'note'); n2.style.margin = '14px 2px 0';
-  n2.textContent = '대전 도시철도 2호선(트램)이 개통되면 이 지표가 어떻게 바뀌는지가 곧 투자 효과의 정량적 근거가 됩니다.';
-  host.appendChild(n2);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -818,14 +928,15 @@ function renderData() {
   host.appendChild(sectionTitle('활용한 공공데이터'));
   var src = el('div', 'src');
   [
-    ['국가철도공단_전국 도시철도 역사정보', '역 위치·노선·환승 구분 · 공공데이터포털'],
-    ['국가철도공단_전국 도시철도 노선정보', '노선별 정거장 구성'],
-    ['국가철도공단_전국 도시철도 운행정보', '열차 운행 순서·소요시간·운행 횟수'],
-    ['국가철도공단_노선별 역간거리', '구간 실측 거리 (18개 노선)'],
+    // 기준일자를 함께 표기한다 — 취약성 진단에서 데이터 시점은 신뢰도의 일부다.
+    ['국가철도공단_전국 도시철도 역사정보', '역 위치·노선·환승 구분 · 기준 2026-06-30'],
+    ['국가철도공단_전국 도시철도 노선정보', '노선별 정거장 구성 · 기준 2026-06-30'],
+    ['국가철도공단_전국 도시철도 운행정보', '열차 운행 순서·소요시간·운행 횟수 · 기준 2026-02-28'],
+    ['국가철도공단_노선별 역간거리', '구간 실측 거리 (32개 파일) · 기준 2023-12 ~ 2025-12 (노선별 상이)'],
     ['국가철도공단_노선별 환승정보', '환승 연결 관계 (15개 기관)'],
-    ['국가철도공단_노선별 승강장 정보', '역층·승강장연결·스크린도어·안전발판 (30개 노선, 5개 권역)'],
-    ['국토교통부_철도역 빠른 환승 정보', '환승 통로와 가장 가까운 차량순서(칸)·출입문 (103개 환승역)'],
-    ['각 도시철도 운영기관_역별 승하차실적', '역별 일평균 이용 규모']
+    ['국가철도공단_노선별 승강장 정보', '역층·승강장연결·스크린도어·안전발판 (30개 노선, 5개 권역) · 기준 2024-09 ~ 2025-06'],
+    ['국토교통부_철도역 빠른 환승 정보', '환승 통로와 가장 가까운 차량순서(칸)·출입문 (103개 환승역) · 기준 2025-11-13'],
+    ['각 도시철도 운영기관_역별 승하차실적', '역별 일평균 이용 규모 · 2025년 연간']
   ].forEach(function (s) {
     var it = el('div', 'src-item');
     it.innerHTML = '<div class="t">' + esc(s[0]) + '</div><div class="d">' + esc(s[1]) + '</div>';
