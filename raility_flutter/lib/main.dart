@@ -4,6 +4,9 @@
 /// 이 앱은 "그 길 위 어느 역 하나가 멈추면 돌아갈 수 있는지"를 계산한다.
 library;
 
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -15,13 +18,77 @@ import 'screens/daejeon.dart';
 import 'screens/data_screen.dart';
 import 'state.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  final raw = await rootBundle.loadString('assets/network.json');
-  final graph = RailGraph.parse(raw);
-  final app = AppState(graph);
-  await app.restore();
-  runApp(RailityApp(state: app));
+  // 번들 파싱(400KB JSON + 그래프 구축)을 main 에서 기다리면 그동안 네이티브
+  // 스플래시에 머문다. 첫 프레임을 즉시 띄우고 파싱은 isolate 에서 한다.
+  runApp(const _Boot());
+}
+
+/// isolate 진입점. 클로저가 아니라 톱레벨 함수여야 State 캡처가 없다.
+RailGraph _parseGraph(Uint8List bytes) => RailGraph.parse(utf8.decode(bytes));
+
+/// 부팅 화면 — 그래프가 준비되면 본 앱으로 교체된다.
+class _Boot extends StatefulWidget {
+  const _Boot();
+  @override
+  State<_Boot> createState() => _BootState();
+}
+
+class _BootState extends State<_Boot> {
+  AppState? _app;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final bytes = await rootBundle.load('assets/network.json');
+    // UTF-8 디코드와 그래프 구축 전부를 isolate 로. RailGraph 는 클로저·네이티브
+    // 핸들이 없는 순수 자료구조라 isolate 경계를 그대로 건널 수 있다.
+    // 주의: Isolate.run(() => ...) 클로저는 컨텍스트 체인을 타고 State(this)까지
+    // 캡처해 릴리스에서 전송이 거부된다 — 반드시 톱레벨 함수 + compute 로 넘긴다.
+    final graph = await compute(_parseGraph, bytes.buffer.asUint8List());
+    final app = AppState(graph);
+    await app.restore();
+    if (mounted) setState(() => _app = app);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = _app;
+    if (app != null) return RailityApp(state: app);
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: buildTheme(Brightness.light),
+      darkTheme: buildTheme(Brightness.dark),
+      home: Builder(builder: (context) {
+        final dark = MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+        final ink = dark ? InkPalette.dark : InkPalette.light;
+        return Scaffold(
+          backgroundColor: ink.bg,
+          body: Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Raility',
+                  style: TextStyle(
+                      fontSize: 28, fontWeight: FontWeight.w700,
+                      color: ink.i0, letterSpacing: -0.8)),
+              const SizedBox(height: 6),
+              Text('도시철도 취약성 진단',
+                  style: TextStyle(fontSize: 13, color: ink.i3)),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2.4, color: ink.tint),
+              ),
+            ]),
+          ),
+        );
+      }),
+    );
+  }
 }
 
 class RailityApp extends StatelessWidget {
