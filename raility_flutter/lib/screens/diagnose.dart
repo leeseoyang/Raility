@@ -501,7 +501,13 @@ class _RouteStrip extends StatelessWidget {
                     ...() {
                       final ftr = st.transferHere ? g.fastTransferAt(result, i) : null;
                       return <Widget>[
-                        if (st.transferHere && st.fromLine != null && st.toLine != null)
+                        if (st.walkHere)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text('도보 이동 ${st.walkM}m — 다음 역까지 걸어서 갈아탑니다',
+                                style: TextStyle(fontSize: 12, color: ink.i4)),
+                          )
+                        else if (st.transferHere && st.fromLine != null && st.toLine != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(

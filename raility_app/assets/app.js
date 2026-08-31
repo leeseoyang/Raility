@@ -432,7 +432,10 @@ function renderStrip(r) {
     nm.innerHTML = esc(s.name) + '<span class="ln" style="color:' + lineColor(st.lines[0]) + '">' + esc(st.lines[0]) + '</span>' + ico;
     body.appendChild(nm);
 
-    if (st.transferHere && st.fromLine && st.toLine) {
+    if (st.walkHere) {
+      body.appendChild(el('div', 'stop-meta',
+        '도보 이동 ' + (st.walkM || '?') + 'm — 다음 역까지 걸어서 갈아탑니다'));
+    } else if (st.transferHere && st.fromLine && st.toLine) {
       var t = st.fromLine + ' → ' + st.toLine + ' 환승';
       // 빠른환승: 내리는 열차의 몇 번째 칸·문이 환승 통로와 가장 가까운가
       var ft = G.fastTransferAt(r, i);
@@ -947,10 +950,12 @@ function renderData() {
   host.appendChild(sectionTitle('분석 방법'));
   var m = el('div', 'src');
   [
-    ['그래프 구성', '역을 노드, 인접 운행구간과 환승을 엣지로 하는 무향 가중그래프를 만듭니다. 가중치는 실제 운행 소요시간이며, 환승은 ' + NET.transferSec + '초로 둡니다.'],
-    ['단일고장점 판정', '출발–도착 최단경로를 구한 뒤, 경로 위의 역을 하나씩 그래프에서 제거하고 다시 탐색합니다. 경로가 사라지면 그 역을 단일고장점으로 판정합니다.'],
+    ['그래프 구성', '역을 노드, 인접 운행구간·환승·도보 연계를 엣지로 하는 무향 가중그래프를 만듭니다. 가중치는 실제 운행 소요시간입니다.'],
+    ['환승 대기', '환승·도보 뒤 새 노선에 올라탈 때 그 노선의 기대 대기시간(운행횟수에서 역산한 배차간격의 절반)을 ' + NET.transferSec + '초 기본 비용에 더합니다. 배차 15분 노선의 우회로는 2호선과 같지 않습니다.'],
+    ['도보 환승', '500m 이내·다른 노선·다른 역이면 도보 엣지로 연결합니다(보행 1.2m/s + 게이트 90초, 13쌍). 역이 멈춰도 한 정거장 걸어가면 되는 경우를 잡습니다. 도보는 경로 탐색에만 쓰고 절점 등 망 위상 지표에는 넣지 않습니다.'],
+    ['단일고장점 판정', '출발–도착 최단경로를 구한 뒤, 경로 위의 역을 하나씩 그래프에서 제거하고 다시 탐색합니다. 경로가 사라지면 단일고장점, 우회가 +30분(또는 원 소요시간 2배)을 넘으면 실질적 단절로 판정해 등급에 반영합니다.'],
     ['우회 부담', '제거 후에도 경로가 남으면 늘어난 소요시간을 우회 비용으로 계산합니다.'],
-    ['한계', '실시간 운행 상황·열차 시각표·버스 등 대체 수단은 반영하지 않습니다. 물리적 선로 연결 구조만으로 판단한 결과입니다.']
+    ['한계', '실시간 운행 상황·열차 시각표·버스 등 대체 수단은 반영하지 않습니다. 배차간격은 전일 평균이며 첨두/비첨두를 구분하지 않습니다.']
   ].forEach(function (s) {
     var it = el('div', 'src-item');
     it.innerHTML = '<div class="t">' + esc(s[0]) + '</div><div class="d">' + esc(s[1]) + '</div>';

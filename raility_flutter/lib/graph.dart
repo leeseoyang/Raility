@@ -59,6 +59,8 @@ class Stop {
   String? fromLine, toLine;
   bool spof = false;
   bool practical = false;  // 실질적 단절 (경로 소멸 또는 +30분/2배 초과 우회)
+  bool walkHere = false;   // 다음 역까지 도보 이동
+  int walkM = 0;
   double delta = 0;
   Stop(this.station, this.nodes);
 }
@@ -173,6 +175,9 @@ class RailGraph {
   /// "권역|역명" -> [[탈때노선 후보, 갈아탈노선 후보, 종착방면, 칸, 문], ...]
   late final Map<String, List<List<dynamic>>> ft;
 
+  /// 노선 -> 기대 대기시간(초). 운행횟수에서 역산한 배차간격의 절반.
+  late final Map<String, int> lineWait;
+
   // 다익스트라 작업 버퍼 (재할당 비용 회피)
   late final Float64List _dist;
   late final Int32List _prev;
@@ -218,6 +223,11 @@ class RailGraph {
       ft[k as String] = (v as List).map((r) => r as List<dynamic>).toList();
     });
 
+    lineWait = {};
+    (j['lineWait'] as Map?)?.forEach((k, v) {
+      lineWait[k as String] = (v as num).toInt();
+    });
+
     _buildAdjacency();
     _buildStations();
     _buildStationAdjacency();
@@ -231,11 +241,19 @@ class RailGraph {
       RailGraph.fromJson(json.decode(jsonText) as Map<String, dynamic>);
 
   void _buildAdjacency() {
+    // 배차간격 반영: 환승(1)·도보(2) 엣지로 노선 ℓ에 '올라탈' 때 그 노선의
+    // 기대 대기시간을 얹는다. 방향에 따라 도착 노선이 달라 가중치가 방향 의존.
+    int boardWait(int nodeIdx) => lineWait[nodes[nodeIdx].line] ?? 0;
     adj = List.generate(nodes.length, (_) => <GEdge>[]);
     for (var ei = 0; ei < edges.length; ei++) {
       final e = edges[ei];
-      adj[e[0]].add(GEdge(e[1], e[3], e[2], ei));
-      adj[e[1]].add(GEdge(e[0], e[3], e[2], ei));
+      var wa = e[3], wb = e[3];
+      if (e[2] != 0) {
+        wa += boardWait(e[1]);
+        wb += boardWait(e[0]);
+      }
+      adj[e[0]].add(GEdge(e[1], wa, e[2], ei));
+      adj[e[1]].add(GEdge(e[0], wb, e[2], ei));
     }
   }
 
@@ -373,6 +391,7 @@ class RailGraph {
     staAdj = List.generate(stations.length, (_) => <int>[]);
     final seen = <int>{};
     for (final e in edges) {
+      if (e[2] == 2) continue; // 도보 엣지는 경로 탐색 전용 — 철도망 위상에는 넣지 않는다
       final a = staOf[e[0]], b = staOf[e[1]];
       if (a == b) continue; // 같은 역 안의 환승은 위상에 영향 없음
       final k = a < b ? a * stations.length + b : b * stations.length + a;
@@ -478,6 +497,10 @@ class RailGraph {
         }
         prevLine = a.toLine;
       } else {
+        if (e != null && e.type == 2) {  // 도보 환승 구간
+          a.walkHere = true;
+          a.walkM = edges[e.ei][4];
+        }
         final la = stations[a.station].lines, lb = stations[b.station].lines;
         final shared = la.where(lb.contains).toList();
         final line = shared.isNotEmpty

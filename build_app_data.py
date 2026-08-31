@@ -276,10 +276,71 @@ if os.path.exists(cp):
 for n in N:                              # 누락 노선 기본색
     COLORS.setdefault(n["l"], "#6B7280")
 
+# ── 노선별 기대 대기시간 (배차간격 반영) ────────────────────
+# 환승 비용 210초 고정은 배차 15분 노선의 우회로를 2호선과 동등하게 취급해
+# 우회 가능성을 체계적으로 과대평가한다(기술 진단서 02).
+# 구간 평일운행횟수(양방향) 중앙값 → 편도 headway = 1140분/(f/2) → 대기 = headway/2.
+# 원본 커버가 부족한 노선(광주 등)의 과대치는 상한 600초로 누른다.
+import statistics as _stats
+_line_freq = {}
+for e in E:
+    if e[2] != 0 or e[5] <= 0:
+        continue
+    la, lb = N[e[0]]["l"], N[e[1]]["l"]
+    if la == lb:
+        _line_freq.setdefault(la, []).append(e[5])
+LINE_WAIT = {}
+for _l, _v in _line_freq.items():
+    _w = 68400.0 / _stats.median(_v)          # 초
+    LINE_WAIT[_l] = int(round(min(600, max(45, _w))))
+_default_wait = int(_stats.median(LINE_WAIT.values())) if LINE_WAIT else 180
+for _l in {n["l"] for n in N}:
+    LINE_WAIT.setdefault(_l, _default_wait)
+print("노선별 대기시간: %d개 노선 · 중앙값 %ds · 최대 %ds"
+      % (len(LINE_WAIT), _default_wait, max(LINE_WAIT.values())))
+
+# ── 도보 환승 엣지 (기술 진단서 04 정합성) ──────────────────
+# 500 m 이내·다른 노선·다른 역명이면 "역이 멈춰도 한 정거장 걸어가면 되는"
+# 대체가 실제로 존재한다. 배차 반영과 반대 방향의 편향이므로 같은 릴리스에 넣는다.
+# w = 거리/1.2 m/s + 게이트 통과 90초. 역명쌍당 최근접 1개만 채택.
+import math as _math
+WALK_MAX_M = 500.0
+_xfer_names = set()
+for e in E:
+    if e[2] == 1:
+        _xfer_names.add(tuple(sorted((_norm(N[e[0]]["fn"]), _norm(N[e[1]]["fn"])))))
+_best = {}
+for i in range(len(N)):
+    a = N[i]
+    for j2 in range(i + 1, len(N)):
+        b = N[j2]
+        if a["l"] == b["l"]:
+            continue
+        na, nb = _norm(a["fn"]), _norm(b["fn"])
+        if na == nb:                          # 같은 역 — 이미 환승 엣지가 있다
+            continue
+        dla = (a["la"] - b["la"]) * 111000.0
+        dlo = (a["lo"] - b["lo"]) * 88000.0
+        dist = _math.hypot(dla, dlo)
+        if dist > WALK_MAX_M:
+            continue
+        key = tuple(sorted((na, nb)))
+        if key in _xfer_names:                # 이름 다른 실제 환승(이수 등) — 이미 연결됨
+            continue
+        if key not in _best or dist < _best[key][0]:
+            _best[key] = (dist, i, j2)
+_walk_n = 0
+for dist, i, j2 in _best.values():
+    sec = int(round(dist / 1.2 + 90))
+    E.append([i, j2, 2, sec, int(round(dist)), 0])
+    _walk_n += 1
+print("도보 환승 엣지: %d개 (500m 이내·다른 노선·다른 역)" % _walk_n)
+
 bundle = {
     "nodes": N, "edges": E, "impact": IMPACT,
     "seg": SEG, "prio": PRIO, "summary": summary,
     "colors": COLORS, "transferSec": TRANSFER_SEC, "ft": FT,
+    "lineWait": LINE_WAIT,
 }
 
 out = P("raility_app", "assets", "data.js")

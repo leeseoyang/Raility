@@ -11,9 +11,16 @@ var NODES = NET.nodes, EDGES = NET.edges;
 
 // 인접 리스트
 var ADJ = NODES.map(function () { return []; });
+// 배차간격 반영: 환승(type 1)·도보(type 2) 엣지로 노선 ℓ에 '올라탈' 때
+// 그 노선의 기대 대기시간(NET.lineWait[ℓ] = 편도 headway/2)을 얹는다.
+// 방향에 따라 도착 노선이 다르므로 가중치가 방향 의존이 된다.
+var LINE_WAIT = NET.lineWait || {};
+function boardWait(nodeIdx) { return LINE_WAIT[NODES[nodeIdx].l] || 0; }
 EDGES.forEach(function (e, ei) {
-  ADJ[e[0]].push({ to: e[1], w: e[3], type: e[2], ei: ei });
-  ADJ[e[1]].push({ to: e[0], w: e[3], type: e[2], ei: ei });
+  var wa = e[3], wb = e[3];
+  if (e[2] !== 0) { wa += boardWait(e[1]); wb += boardWait(e[0]); }
+  ADJ[e[0]].push({ to: e[1], w: wa, type: e[2], ei: ei });
+  ADJ[e[1]].push({ to: e[0], w: wb, type: e[2], ei: ei });
 });
 
 // 같은 역사명 + 같은 권역 = 하나의 "역".
@@ -218,6 +225,7 @@ function toStops(path) {
         : NODES[b.nodes[0]].l;
       seg = { transfer: false, line: line };
     }
+    if (e && e.type === 2) { a.walkHere = true; a.walkM = EDGES[e.ei][4]; }  // 도보 환승 구간
     a.rideLine = seg.line;
     a.segTransfer = seg.transfer;
     if (!seg.transfer) {
@@ -293,6 +301,7 @@ var STA_ADJ = STATIONS.map(function () { return []; });
 (function () {
   var seen = {};
   EDGES.forEach(function (e) {
+    if (e[2] === 2) return;                    // 도보 엣지는 경로 탐색 전용 — 철도망 위상(절점 등)에는 넣지 않는다
     var a = STA_OF[e[0]], b = STA_OF[e[1]];
     if (a === b) return;                       // 같은 역 안의 환승은 위상에 영향 없음
     var k = a < b ? a + ',' + b : b + ',' + a;

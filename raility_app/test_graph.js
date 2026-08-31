@@ -288,5 +288,42 @@ var ftFalse = dft.stops.filter(function (st, i) {
 }).length;
 ok('비환승 역에는 안내 없음', ftFalse === 0, ftFalse + '건');
 
+/* ── 13. 배차간격 · 도보 환승 ──────────────────────── */
+hdr('배차간격 · 도보 환승');
+var lw = NET.lineWait || {};
+ok('노선별 대기시간 존재 (45~600초)', Object.keys(lw).length >= 40 &&
+   Object.keys(lw).every(function (k) { return lw[k] >= 45 && lw[k] <= 600; }),
+   Object.keys(lw).length + '개 노선');
+ok('저빈도 노선 대기 > 고빈도 노선 대기',
+   (lw['에버라인'] || 0) > (lw['2호선'] || 9e9),
+   '에버라인 ' + lw['에버라인'] + 's vs 2호선 ' + lw['2호선'] + 's');
+var walkE = NET.edges.filter(function (e) { return e[2] === 2; });
+ok('도보 엣지 존재 (10~30개)', walkE.length >= 10 && walkE.length <= 30, walkE.length + '개');
+ok('도보 엣지 노선 상이·500m 이내', walkE.every(function (e) {
+  return NET.nodes[e[0]].l !== NET.nodes[e[1]].l && e[4] <= 500;
+}));
+// 도보 엣지는 경로 탐색에는 쓰이되 철도망 위상(STA_ADJ)에는 없어야 한다.
+// 단, 동대문↔동묘앞처럼 철길로도 인접한 쌍은 원래 위상에 있는 것이 맞으므로
+// '도보로만 이어지는 쌍'에 한정해 검사한다.
+var railPair = {};
+NET.edges.forEach(function (e) {
+  if (e[2] === 2) return;
+  var a = G.STA_OF[e[0]], b = G.STA_OF[e[1]];
+  if (a !== b) railPair[Math.min(a, b) + ',' + Math.max(a, b)] = 1;
+});
+var walkInTopo = 0, walkOnly = 0;
+walkE.forEach(function (e) {
+  var a = G.STA_OF[e[0]], b = G.STA_OF[e[1]];
+  if (railPair[Math.min(a, b) + ',' + Math.max(a, b)]) return;
+  walkOnly++;
+  if (G.STA_ADJ[a].indexOf(b) >= 0) walkInTopo++;
+});
+ok('도보로만 이어지는 쌍은 망 위상에서 제외', walkOnly > 0 && walkInTopo === 0,
+   walkOnly + '쌍 중 오염 ' + walkInTopo);
+// 대전은 단일 노선이라 도보 엣지가 없어 판정이 변하지 않아야 한다.
+var dj2 = G.diagnose(find('판암', '대전'), find('반석', '대전'));
+ok('대전 전 구간 여전히 전부 SPOF', dj2.spof.length === dj2.mids.length && dj2.grade === 'E',
+   dj2.spof.length + '/' + dj2.mids.length + ' ' + dj2.grade);
+
 console.log('\n' + (fail === 0 ? '전부 통과' : fail + '건 실패') + '  (통과 ' + pass + ' / 실패 ' + fail + ')');
 process.exit(fail ? 1 : 0);

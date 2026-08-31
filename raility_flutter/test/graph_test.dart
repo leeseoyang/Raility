@@ -322,6 +322,38 @@ void main() {
       }
       expect(hits, greaterThanOrEqualTo(1));
     });
+    test('배차간격: 노선별 대기 45~600초, 저빈도 > 고빈도', () {
+      expect(g.lineWait.length, greaterThanOrEqualTo(40));
+      for (final w in g.lineWait.values) {
+        expect(w, inInclusiveRange(45, 600));
+      }
+      expect(g.lineWait['에버라인']!, greaterThan(g.lineWait['2호선']!));
+    });
+    test('도보 엣지: 경로 탐색에는 있고 망 위상에는 없다', () {
+      final walk = g.edges.where((e) => e[2] == 2).toList();
+      expect(walk.length, inInclusiveRange(10, 30));
+      // 철길로도 인접한 쌍 제외, 도보로만 이어지는 쌍은 staAdj 에 없어야 한다
+      final railPair = <int>{};
+      for (final e in g.edges) {
+        if (e[2] == 2) continue;
+        final a = g.staOf[e[0]], b = g.staOf[e[1]];
+        if (a != b) railPair.add(a < b ? a * g.stations.length + b : b * g.stations.length + a);
+      }
+      var walkOnly = 0;
+      for (final e in walk) {
+        final a = g.staOf[e[0]], b = g.staOf[e[1]];
+        final k = a < b ? a * g.stations.length + b : b * g.stations.length + a;
+        if (railPair.contains(k)) continue;
+        walkOnly++;
+        expect(g.staAdj[a].contains(b), isFalse);
+      }
+      expect(walkOnly, greaterThan(0));
+    });
+    test('대전은 도보 엣지 영향 없음 — 전 구간 SPOF·E 유지', () {
+      final r = g.diagnose(g.lookup('판암', '대전')!, g.lookup('반석', '대전')!);
+      expect(r.spof.length, r.mids.length);
+      expect(r.grade, 'E');
+    });
     test('accOf 는 자료 없음과 장벽 없음을 구분', () {
       final none = g.nodes.indexWhere((n) => n.ac == null);
       expect(g.accOf([none]), isNull);              // 자료 없음 → null
