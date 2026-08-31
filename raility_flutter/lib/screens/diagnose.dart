@@ -90,18 +90,24 @@ class DiagnoseScreen extends StatelessWidget {
       ];
     }
 
-    // 결론 한 문장이 먼저다. 등급 설명은 보조로 내린다. (웹판과 동일한 규칙)
+    // 결론 한 문장이 먼저다. '실질적 단절' 기준. (웹판과 동일한 규칙)
     final gt = gradeText[r.grade]!;
+    final np = r.practical.length;
     final String headline;
     var sub = gt[0];
-    if (r.spof.isEmpty) {
+    if (np == 0) {
       headline = '어느 역이 멈춰도 돌아갈 길이 있습니다';
       if (r.maxDelta > 0) sub += ' · 우회 시 최대 +${mins(r.maxDelta)}분';
-    } else if (r.spof.length == r.mids.length) {
-      headline = '중간역 ${r.mids.length}개 전부 — 하나만 멈춰도 갈 수 없습니다';
+    } else if (np == r.mids.length) {
+      headline = r.spof.length == r.mids.length
+          ? '중간역 ${r.mids.length}개 전부 — 하나만 멈춰도 갈 수 없습니다'
+          : '중간역 ${r.mids.length}개 전부 — 멈추면 사실상 갈 수 없습니다';
     } else {
-      headline = '중간역 ${r.mids.length}개 중 ${r.spof.length}개는 멈추면 우회가 없습니다';
+      headline = '중간역 ${r.mids.length}개 중 $np개는 멈추면 사실상 갈 수 없습니다';
       if (r.detour.isNotEmpty) sub += ' · 나머지는 우회 시 최대 +${mins(r.maxDelta)}분';
+    }
+    if (np > r.spof.length) {
+      sub += ' · 우회 불가 ${r.spof.length}개 + 30분 초과 우회 ${np - r.spof.length}개';
     }
     return [
       const SizedBox(height: 14),
@@ -151,26 +157,34 @@ class DiagnoseScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: _RouteStrip(result: r),
       ),
-      if (r.spof.isNotEmpty) ...[
+      if (r.practical.isNotEmpty) ...[
         const Eyebrow('먼저 대비해야 할 역'),
         Panel(
           child: Column(children: [
-            for (var i = 0; i < r.spof.length && i < 6; i++)
-              () {
-                final sorted = [...r.spof]
-                  ..sort((a, b) =>
-                      g.stations[b.station].demand.compareTo(g.stations[a.station].demand));
-                final s = g.stations[sorted[i].station];
-                return RowTile(
-                  divider: i > 0,
-                  rank: '${i + 1}',
-                  title: s.name,
-                  subtitle: s.lines.join(', '),
-                  value: comma(s.demand),
-                  valueLabel: '일평균 승하차',
-                  onTap: () => showStationSheet(context, sorted[i].station),
-                );
-              }(),
+            // 사회적 취약도 S = 수요 × min(우회 지연, 30분) 순 (웹판과 동일)
+            () {
+              double social(Stop st) {
+                final d = st.spof
+                    ? RailGraph.practicalCapS
+                    : (st.delta < RailGraph.practicalCapS ? st.delta : RailGraph.practicalCapS);
+                return g.stations[st.station].demand * d;
+              }
+              final sorted = [...r.practical]
+                ..sort((a, b) => social(b).compareTo(social(a)));
+              return Column(children: [
+                for (var i = 0; i < sorted.length && i < 6; i++)
+                  RowTile(
+                    divider: i > 0,
+                    rank: '${i + 1}',
+                    title: g.stations[sorted[i].station].name,
+                    subtitle: g.stations[sorted[i].station].lines.join(', ') +
+                        (sorted[i].spof ? ' · 우회 불가' : ' · 우회 +${mins(sorted[i].delta)}분'),
+                    value: comma(g.stations[sorted[i].station].demand),
+                    valueLabel: '일평균 승하차',
+                    onTap: () => showStationSheet(context, sorted[i].station),
+                  ),
+              ]);
+            }(),
           ]),
         ),
       ],

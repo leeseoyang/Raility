@@ -58,6 +58,7 @@ class Stop {
   bool segTransfer = false;
   String? fromLine, toLine;
   bool spof = false;
+  bool practical = false;  // 실질적 단절 (경로 소멸 또는 +30분/2배 초과 우회)
   double delta = 0;
   Stop(this.station, this.nodes);
 }
@@ -65,7 +66,7 @@ class Stop {
 class Diagnosis {
   final bool ok;
   final PathResult? base;
-  final List<Stop> stops, mids, spof, detour;
+  final List<Stop> stops, mids, spof, practical, detour;
   final double maxDelta, ratio;
   final String grade;
   final int transfers;
@@ -77,6 +78,7 @@ class Diagnosis {
     this.stops = const [],
     this.mids = const [],
     this.spof = const [],
+    this.practical = const [],
     this.detour = const [],
     this.maxDelta = 0,
     this.ratio = 0,
@@ -499,31 +501,46 @@ class RailGraph {
     return stops;
   }
 
+  /// 실질적 단절 상한(초). 우회가 이보다 오래 걸리면 사실상 못 가는 것으로 본다.
+  static const practicalCapS = 1800.0;
+
   /// 경로 위 중간역을 하나씩 제거해 우회 가능 여부를 판정한다.
+  /// (판정 규칙은 웹판 graph.js diagnose 와 동일해야 한다)
   Diagnosis diagnose(int src, int dst) {
     final base = shortest(src, dst);
     if (base == null) return const Diagnosis(ok: false);
 
     final stops = toStops(base.path);
     final mids = stops.length > 2 ? stops.sublist(1, stops.length - 1) : <Stop>[];
-    final spof = <Stop>[], detour = <Stop>[];
+    final spof = <Stop>[], practical = <Stop>[], detour = <Stop>[];
     var maxDelta = 0.0;
 
     for (final st in mids) {
       final alt = shortest(src, dst, block: [st.station]);
       if (alt == null) {
         st.spof = true;
+        st.practical = true;
         spof.add(st);
+        practical.add(st);
         continue;
       }
       st.delta = alt.time - base.time;
+      // 실질적 단절: 경로가 남아도 +30분 이상이거나 원 소요시간의 2배를 넘으면
+      // 통근자에겐 단절과 같다.
+      if (st.delta > practicalCapS || st.delta > base.time) {
+        st.practical = true;
+        practical.add(st);
+      }
       if (st.delta > 60) {
         detour.add(st);
         if (st.delta > maxDelta) maxDelta = st.delta;
       }
     }
 
-    final ratio = mids.isEmpty ? 0.0 : spof.length / mids.length;
+    // 등급은 '실질적 단절' 비율. 짧은 경로의 요동은 라플라스 평활(α=1)로 억제.
+    final ratio = practical.isEmpty
+        ? 0.0
+        : (practical.length + 1) / (mids.length + 2);
     final grade = ratio == 0
         ? 'A'
         : ratio <= 0.15
@@ -546,6 +563,7 @@ class RailGraph {
       stops: stops,
       mids: mids,
       spof: spof,
+      practical: practical,
       detour: detour,
       maxDelta: maxDelta,
       ratio: ratio,
