@@ -252,19 +252,21 @@ class _Chip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ink = Palette.of(context);
+    // iOS 칩 규격 — 진단 탭 지역 칩·웹판 .seg-btn 과 같은 문법 (선택 = 틴트)
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
         decoration: BoxDecoration(
-          color: on ? ink.i0 : Colors.transparent,
-          border: Border.all(color: on ? ink.i0 : ink.lineStrong),
+          color: on ? ink.tint : ink.surface2,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(label,
             style: TextStyle(
-                fontSize: 12.5, fontWeight: FontWeight.w600, color: on ? ink.bg : ink.i3)),
+                fontSize: 13,
+                fontWeight: on ? FontWeight.w600 : FontWeight.w500,
+                color: on ? Colors.white : ink.i2)),
       ),
     );
   }
