@@ -259,12 +259,23 @@ function runDiagnose() {
     return;
   }
 
+  // 결론 한 문장이 먼저다. 등급 설명은 보조로 내린다.
   var gt = GRADE_TEXT[r.grade];
+  var headline, sub = gt[0];
+  if (r.spof.length === 0) {
+    headline = '어느 역이 멈춰도 돌아갈 길이 있습니다';
+    if (r.maxDelta > 0) sub += ' · 우회 시 최대 +' + mins(r.maxDelta) + '분';
+  } else if (r.spof.length === r.mids.length) {
+    headline = '중간역 ' + r.mids.length + '개 전부 — 하나만 멈춰도 갈 수 없습니다';
+  } else {
+    headline = '중간역 ' + r.mids.length + '개 중 ' + r.spof.length + '개는 멈추면 우회가 없습니다';
+    if (r.detour.length) sub += ' · 나머지는 우회 시 최대 +' + mins(r.maxDelta) + '분';
+  }
   var v = el('div', 'verdict');
   v.innerHTML =
     '<div class="verdict-top">' +
       '<div class="grade" data-g="' + r.grade + '">' + r.grade + '</div>' +
-      '<div class="verdict-head"><h2>' + gt[0] + '</h2><p>' + gt[1] + '</p></div>' +
+      '<div class="verdict-head"><h2>' + headline + '</h2><p>' + sub + '</p></div>' +
     '</div>' +
     '<dl class="metrics">' +
       '<div class="metric"><dt>소요시간</dt><dd class="num">' + mins(r.base.time) + '<i>분</i></dd></div>' +
@@ -273,40 +284,44 @@ function runDiagnose() {
     '</dl>';
   out.appendChild(v);
 
-  // 요약 문장
-  var lead = el('p', 'note');
-  lead.style.margin = '12px 2px 0';
-  if (r.spof.length === 0) {
-    lead.innerHTML = '이 경로의 중간역 <b>' + r.mids.length + '개</b>는 모두 우회 가능합니다. ' +
-      (r.maxDelta > 0 ? '가장 불리한 경우에도 <b>' + mins(r.maxDelta) + '분</b>만 더 걸립니다.' : '');
-  } else {
-    lead.innerHTML = '중간역 <b>' + r.mids.length + '개</b> 중 <b>' + r.spof.length + '개</b>가 멈추면 ' +
-      '<b>이 경로로는 목적지에 갈 수 없습니다.</b>' +
-      (r.detour.length ? ' 나머지 ' + r.detour.length + '개 역은 우회 시 최대 ' + mins(r.maxDelta) + '분이 더 걸립니다.' : '');
-  }
-  out.appendChild(lead);
-
-  // 교통약자 관점 — 경로 위 승강장 장벽 집계
-  var accCnt = [0, 0, 0], accNone = 0;
+  // 교통약자 관점 — 기본은 한 줄 요약, 탭하면 상세가 펼쳐진다
+  var accCnt = [0, 0, 0], accNone = 0, accStations = 0;
   r.stops.forEach(function (st) {
     var a = accOf(st.nodes);
     if (!a) { accNone++; return; }
-    for (var k = 0; k < 3; k++) if (a[k + 1]) accCnt[k]++;
+    var any = false;
+    for (var k = 0; k < 3; k++) if (a[k + 1]) { accCnt[k]++; any = true; }
+    if (any) accStations++;
   });
-  if (accCnt[0] + accCnt[1] + accCnt[2] + accNone > 0) {
-    out.appendChild(sectionTitle('교통약자 관점'));
+  if (accStations + accNone > 0) {
     var card = el('div', 'acc-card');
+    card.style.marginTop = '10px';
+    var head = el('button', 'acc-row acc-fold-head');
+    var ic = el('div', 'ic');
+    ic.style.background = accStations ? 'var(--risk-2)' : 'var(--ink-4)';
+    ic.innerHTML = svgRamp();
+    head.appendChild(ic);
+    head.appendChild(el('div', 'tx',
+      accStations
+        ? '교통약자 장벽이 있는 역 ' + accStations + '개'
+        : '교통약자 장벽 확인 안 됨 (정보 없음 ' + accNone + '개)'));
+    var chev = el('span', 'chev');
+    chev.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
+    head.appendChild(chev);
+    card.appendChild(head);
+
+    var body = el('div', 'acc-fold-body');
     var ICONS = [svgRamp(), svgLink(), svgDoor()];
     ACC_LABEL.forEach(function (lb, k) {
       if (!accCnt[k]) return;
       var row = el('div', 'acc-row');
-      var ic = el('div', 'ic'); ic.style.background = 'var(--risk-2)'; ic.innerHTML = ICONS[k];
-      row.appendChild(ic);
+      var i2 = el('div', 'ic'); i2.style.background = 'var(--risk-2)'; i2.innerHTML = ICONS[k];
+      row.appendChild(i2);
       row.appendChild(el('div', 'tx', lb + ' 역'));
       var ct = el('div', 'ct');
       ct.innerHTML = '<span class="num">' + accCnt[k] + '</span><small>개</small>';
       row.appendChild(ct);
-      card.appendChild(row);
+      body.appendChild(row);
     });
     if (accNone) {
       var row2 = el('div', 'acc-row');
@@ -316,14 +331,16 @@ function runDiagnose() {
       var ct2 = el('div', 'ct');
       ct2.innerHTML = '<span class="num">' + accNone + '</span><small>개</small>';
       row2.appendChild(ct2);
-      card.appendChild(row2);
+      body.appendChild(row2);
     }
-    out.appendChild(card);
     var accNote = el('p', 'note');
-    accNote.style.margin = '8px 2px 0';
+    accNote.style.margin = '4px 16px 12px';
     accNote.textContent = '국가철도공단 승강장 정보 기준. 안전발판이 없으면 휠체어·유아차 단독 승하차가 어렵고, ' +
       '승강장이 미연결이면 반대 방향으로 가려면 개찰구를 나가야 합니다.';
-    out.appendChild(accNote);
+    body.appendChild(accNote);
+    card.appendChild(body);
+    head.onclick = function () { card.classList.toggle('open'); };
+    out.appendChild(card);
   }
 
   // 경로 스트립
@@ -391,46 +408,32 @@ function renderStrip(r) {
     row.appendChild(rail);
 
     var body = el('div', 'stop-body');
+    // 태그 다이어트: 텍스트 태그 대신 이름 옆 작은 아이콘. 상세는 역을 탭하면 나온다.
+    var ac = accOf(st.nodes);
+    var hasBar = ac && (ac[1] || ac[2] || ac[3]);
+    var ico = '';
+    if (st.spof) ico += '<span class="stop-ico" style="color:var(--risk-3)" title="멈추면 우회 불가">' + svgAlert() + '</span>';
+    if (hasBar) ico += '<span class="stop-ico" style="color:var(--risk-2)" title="교통약자 장벽">' + svgRamp() + '</span>';
     var nm = el('div', 'stop-name');
-    nm.innerHTML = esc(s.name) + '<span class="ln" style="color:' + lineColor(st.lines[0]) + '">' + esc(st.lines[0]) + '</span>';
+    nm.innerHTML = esc(s.name) + '<span class="ln" style="color:' + lineColor(st.lines[0]) + '">' + esc(st.lines[0]) + '</span>' + ico;
     body.appendChild(nm);
 
     if (st.transferHere && st.fromLine && st.toLine) {
-      body.appendChild(el('span', 'xfer-note', st.fromLine + ' → ' + st.toLine + ' 환승'));
+      var t = st.fromLine + ' → ' + st.toLine + ' 환승';
       // 빠른환승: 내리는 열차의 몇 번째 칸·문이 환승 통로와 가장 가까운가
       var ft = G.fastTransferAt(r, i);
       if (ft) {
-        var txt = ft.list.map(function (x) {
-          // 종착역명 결측 레코드는 방면 라벨 없이 칸-문만 표시한다
+        t += ' · 빠른 환승 ' + ft.list.map(function (x) {
           return x.car + '-' + x.door + (ft.resolved || !x.dir ? '' : ' (' + x.dir + ' 방면)');
         }).join(' · ');
-        body.appendChild(el('span', 'ft-tag', '빠른 환승 ' + txt));
       }
-    }
-
-    if (st.spof) {
-      var tag = el('span', 'spof-tag');
-      tag.innerHTML = svgAlert() + ' 이 역이 멈추면 우회 불가';
-      body.appendChild(tag);
-    }
-    // 승강장 장벽 — SPOF 와 별개 축이므로 함께 표시한다.
-    var ac = accOf(st.nodes);
-    if (ac) {
-      ACC_LABEL.forEach(function (lb, k) {
-        if (ac[k + 1]) body.appendChild(el('span', 'acc-tag', lb));
-      });
-    } else {
-      body.appendChild(el('span', 'acc-tag none', '승강장 정보 없음'));
+      body.appendChild(el('div', 'stop-meta', t));
     }
     if (!st.spof && st.delta > 60) {
       // 같은 우회 시간이 연달아 나오면 첫 역에만 표시해 화면을 어지럽히지 않는다.
       var prev = r.stops[i - 1];
       var sameRun = prev && !prev.spof && prev.delta > 60 && mins(prev.delta) === mins(st.delta);
-      if (!sameRun) {
-        var d = el('span', 'detour-tag');
-        d.textContent = '우회 시 +' + mins(st.delta) + '분';
-        body.appendChild(d);
-      }
+      if (!sameRun) body.appendChild(el('div', 'stop-meta', '우회 시 +' + mins(st.delta) + '분'));
     }
     row.appendChild(body);
     row.onclick = function () { openStation(st.sta); };

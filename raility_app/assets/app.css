@@ -153,13 +153,17 @@ button { background:none; border:0; padding:0; cursor:pointer; -webkit-tap-highl
 .acc-row .ct { font-size:16px; font-weight:600; color:var(--ink-0); }
 .acc-row .ct small { font-size:12px; font-weight:500; color:var(--ink-3); margin-left:1px; }
 
-/* 경로 스트립 안 장벽 태그 */
-.acc-tag {
-  display:inline-flex; align-items:center; gap:4px; margin-top:6px; margin-right:5px;
-  font-size:11.5px; font-weight:600; color:var(--risk-2);
-  background:var(--risk-2-bg); border-radius:6px; padding:3px 7px;
-}
-.acc-tag.none { color:var(--ink-4); background:var(--surface-2); font-weight:500; }
+/* 접이식 헤더 (교통약자 요약) */
+.acc-fold-head { width:100%; text-align:left; }
+.acc-fold-head .chev { color:var(--ink-4); display:grid; transition:transform .18s; }
+.acc-card.open .acc-fold-head .chev { transform:rotate(90deg); }
+.acc-fold-body { display:none; }
+.acc-card.open .acc-fold-body { display:block; }
+.acc-fold-body .acc-row { border-top:.5px solid var(--line); margin-left:var(--pad); padding-left:0; }
+
+/* 스트립 이름 옆 상태 아이콘 */
+.stop-ico { display:inline-flex; vertical-align:-1px; margin-left:6px; }
+.stop-ico svg { width:12px; height:12px; }
 
 /* ── 경로 스트립 ──────────────────────────────────── */
 .strip { margin-top:8px; border-radius:var(--r-l); background:var(--surface); padding:2px var(--pad); }
