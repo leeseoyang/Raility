@@ -165,6 +165,29 @@ button { background:none; border:0; padding:0; cursor:pointer; -webkit-tap-highl
 .stop-ico { display:inline-flex; vertical-align:-1px; margin-left:6px; }
 .stop-ico svg { width:12px; height:12px; }
 
+/* 대비역 행 확장 — 대체 경로 요약 */
+.alt-detail {
+  margin-left:var(--pad); padding:10px 16px 12px 0;
+  border-top:.5px solid var(--line);
+  font-size:13px; color:var(--ink-2); line-height:1.55;
+  background:var(--surface);
+}
+.alt-detail b { color:var(--ink-0); }
+.alt-link {
+  display:block; margin-top:7px; font-size:13px; font-weight:500; color:var(--tint);
+}
+
+/* 지도 시뮬레이션 모드 */
+.sim-bar {
+  display:flex; align-items:center; gap:8px; margin:10px 0 0;
+}
+.sim-banner {
+  margin-top:10px; border-radius:var(--r-m); padding:11px 14px;
+  font-size:13.5px; line-height:1.5; background:var(--surface);
+}
+.sim-banner.dead { background:var(--risk-3-bg); color:var(--ink-0); }
+.sim-banner b { color:var(--ink-0); }
+
 /* ── 경로 스트립 ──────────────────────────────────── */
 .strip { margin-top:8px; border-radius:var(--r-l); background:var(--surface); padding:2px var(--pad); }
 .stop { display:flex; gap:12px; align-items:stretch; }

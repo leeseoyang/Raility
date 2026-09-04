@@ -29,6 +29,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 권역 진단 탭의 선택 권역
+  String? panelRegion;
+
+  /// 배차 모드 등 그래프 가중치가 바뀐 뒤 현재 출도착으로 다시 진단한다.
+  void rediagnose() => _run();
+
   int? get from => _from;
   int? get to => _to;
 

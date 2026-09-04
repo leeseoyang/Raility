@@ -64,8 +64,10 @@ function toast(msg) {
 var state = {
   region: localStorage.getItem('rl.region') || '수도권',
   from: null, to: null, result: null,
-  mapRegion: localStorage.getItem('rl.region') || '수도권'
+  mapRegion: localStorage.getItem('rl.region') || '수도권',
+  simOn: false, closed: {}              // 지도 시뮬레이션: 정지시킨 역 집합
 };
+window._simReset = function () { state.closed = {}; renderMap(); };
 try {
   var saved = JSON.parse(localStorage.getItem('rl.od') || 'null');
   if (saved && STATIONS[saved.f] && STATIONS[saved.t]) { state.from = saved.f; state.to = saved.t; }
@@ -242,6 +244,22 @@ function lookupStation(name, region) {
   return any;
 }
 
+// 배차 시간대 선택 — 첨두엔 우회 가능해도 한산 시간엔 사실상 단절인 경로가 있다.
+var WAIT_MODES = [['peak', '첨두'], ['avg', '평균'], ['quiet', '한산']];
+function renderWaitChips(out) {
+  var wrap = el('div', 'segbar');
+  wrap.style.margin = '10px 0 0';
+  WAIT_MODES.forEach(function (m) {
+    var b = el('button', 'seg-btn', m[1] + ' 배차');
+    b.setAttribute('aria-pressed', String(G.getWaitMode() === m[0]));
+    b.onclick = function () {
+      if (G.setWaitMode(m[0])) runDiagnose();
+    };
+    wrap.appendChild(b);
+  });
+  out.appendChild(wrap);
+}
+
 function runDiagnose() {
   var out = $('#result');
   out.innerHTML = '';
@@ -250,6 +268,8 @@ function runDiagnose() {
   var t0 = performance.now();
   var r = diagnose(state.from, state.to);
   state.result = r;
+
+  renderWaitChips(out);
 
   if (!r.ok) {
     var w = el('div', 'verdict');
@@ -379,11 +399,97 @@ function runDiagnose() {
         var val = el('div', 'row-val');
         val.innerHTML = '<span class="num">' + comma(s.demand) + '</span><small>일평균 승하차</small>';
         b.appendChild(val);
-        b.onclick = function () { openStation(st.sta); };
+        // 탭하면 "그래서 어떻게 가야 하나"를 펼친다 — 대체 경로 요약 (요청 시 1회 계산)
+        var detail = null;
+        b.onclick = function () {
+          if (detail) { detail.remove(); detail = null; return; }
+          detail = el('div', 'alt-detail');
+          var alt = st.spof ? null : G.shortest(r.stops[0].sta, r.stops[r.stops.length - 1].sta, st.sta);
+          if (!alt) {
+            var walkAlt = nearestWalkable(st.sta);
+            detail.innerHTML = '<b>이 역이 멈추면 이 경로로는 갈 수 없습니다.</b> ' +
+              (walkAlt
+                ? '인근 대체: <b>' + esc(walkAlt.name) + '</b>까지 도보 약 ' + walkAlt.m + 'm.'
+                : '500m 안에 다른 노선 역도 없습니다.');
+          } else {
+            var lines = [];
+            G.toStops(alt.path).forEach(function (x) {
+              if (x.rideLine && lines.indexOf(x.rideLine) < 0) lines.push(x.rideLine);
+            });
+            detail.innerHTML = '우회 경로: <b>' + esc(lines.join(' → ')) + '</b> · ' +
+              '+' + mins(alt.time - r.base.time) + '분 (' + mins(alt.time) + '분 소요)';
+          }
+          var link = el('button', 'alt-link', '역 정보 보기');
+          link.onclick = function (ev) { ev.stopPropagation(); openStation(st.sta); };
+          detail.appendChild(link);
+          b.insertAdjacentElement('afterend', detail);
+        };
         rows.appendChild(b);
       });
     out.appendChild(rows);
   }
+
+  // 고급 진단 — 실제 사고 양상(구간·연속·복수 고장). 수백 회 재탐색이라 요청 시 계산.
+  var advCard = el('div', 'acc-card');
+  advCard.style.marginTop = '18px';
+  var advHead = el('button', 'acc-row acc-fold-head');
+  var advIc = el('div', 'ic'); advIc.style.background = 'var(--tint)';
+  advIc.innerHTML = svgLayers();
+  advHead.appendChild(advIc);
+  advHead.appendChild(el('div', 'tx', '고급 진단 — 구간 사고·연속 폐쇄·이중 고장'));
+  var advChev = el('span', 'chev');
+  advChev.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
+  advHead.appendChild(advChev);
+  advCard.appendChild(advHead);
+  var advBody = el('div', 'acc-fold-body');
+  advCard.appendChild(advBody);
+  var advDone = false;
+  advHead.onclick = function () {
+    advCard.classList.toggle('open');
+    if (advDone || !advCard.classList.contains('open')) return;
+    advDone = true;
+    advBody.appendChild(el('p', 'note', '수백 가지 고장 조합을 탐색하는 중…'))
+      .style.margin = '4px 16px 12px';
+    setTimeout(function () {
+      var adv = G.advanced(r);
+      advBody.innerHTML = '';
+      function advRow(title, subTxt) {
+        var row = el('div', 'acc-row');
+        row.style.borderTop = '.5px solid var(--line)';
+        row.style.marginLeft = '16px'; row.style.paddingLeft = '0';
+        var mm = el('div', 'tx');
+        mm.innerHTML = '<div style="font-weight:600;color:var(--ink-0)">' + title + '</div>' +
+          '<div style="font-size:12.5px;color:var(--ink-3);margin-top:2px">' + subTxt + '</div>';
+        row.appendChild(mm);
+        advBody.appendChild(row);
+      }
+      var deadCuts = adv.cuts.filter(function (c) { return c.dead; });
+      advRow('구간 사고 (선로 단절)',
+        deadCuts.length
+          ? '경로 구간 ' + (r.stops.length - 1) + '개 중 <b>' + deadCuts.length + '개</b>는 끊기면 우회가 없습니다 — ' +
+            deadCuts.slice(0, 2).map(function (c) {
+              return esc(STATIONS[c.a].name) + '↔' + esc(STATIONS[c.b].name);
+            }).join(', ') + (deadCuts.length > 2 ? ' 외' : '')
+          : '어느 한 구간이 끊겨도 실질적 우회가 존재합니다');
+      advRow('연속 폐쇄 (2~4역 동시)',
+        adv.windows.length
+          ? '같은 노선 <b>' + adv.windows[0].w + '개 역</b> 연속 폐쇄 조합 ' + adv.windows.length + '개가 경로를 사실상 끊습니다 — 예: ' +
+            adv.windows[0].stas.map(function (si) { return esc(STATIONS[si].name); }).join('·')
+          : '단독 생존 구간은 4역 연속 폐쇄에도 실질 단절이 없습니다');
+      advRow('이중 고장 (k=2)',
+        adv.pairCandidates < 2
+          ? '단독 생존 중간역이 2개 미만이라 해당 없음'
+          : adv.pairs.length
+            ? '단독으론 버티는 역 ' + adv.pairCandidates + '개 중 <b>' + adv.pairs.length + '쌍</b>은 함께 멈추면 경로가 사라집니다 — 예: ' +
+              esc(STATIONS[adv.pairs[0][0]].name) + ' + ' + esc(STATIONS[adv.pairs[0][1]].name)
+            : '단독 생존 역 ' + adv.pairCandidates + '개는 어떤 두 개가 함께 멈춰도 경로가 남습니다');
+      var advNote = el('p', 'note');
+      advNote.style.margin = '4px 16px 12px';
+      advNote.textContent = '실제 운행중단 공지는 역이 아니라 "A역–B역 구간" 형식입니다. 이 진단은 그 형식과 같은 단위로 계산합니다.';
+      advBody.appendChild(advNote);
+    }, 30);
+  };
+  out.appendChild(advCard);
 
   var share = el('button', 'cta');
   share.style.marginTop = '20px';
@@ -479,6 +585,23 @@ function svgDoor() {
   return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M12 3v18"/><path d="m8.5 9 1.5 3-1.5 3"/><path d="m15.5 9-1.5 3 1.5 3"/></svg>';
 }
+/* 대체역 탐색: 500m 이내·노선이 겹치지 않는 가장 가까운 역 */
+function nearestWalkable(si) {
+  var s = STATIONS[si], best = null;
+  STATIONS.forEach(function (t, ti) {
+    if (ti === si) return;
+    if (t.lines.some(function (l) { return s.lines.indexOf(l) >= 0; })) return;
+    var d = Math.hypot((s.lat - t.lat) * 111000, (s.lon - t.lon) * 88000);
+    if (d <= 500 && (!best || d < best.m)) best = { name: t.name, m: Math.round(d) };
+  });
+  return best;
+}
+
+function svgLayers() {
+  return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>';
+}
+
 function svgQ() {
   return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
     '<path d="M9.3 9a2.8 2.8 0 1 1 3.9 2.6c-.9.4-1.2 1-1.2 1.9"/><path d="M12 17h.01"/></svg>';
@@ -648,6 +771,34 @@ function renderMap() {
     g.appendChild(ln);
   });
 
+  // 시뮬레이션: 정지된 역을 뺀 철도망에서 최대 성분에 못 닿는 역을 계산
+  var cutoff = {};
+  var closedList = Object.keys(state.closed).map(Number);
+  if (state.simOn && closedList.length) {
+    var members = {}, order = [];
+    idxs.forEach(function (i) {
+      var si = STA_OF[i];
+      if (!members[si]) { members[si] = 1; order.push(si); }
+    });
+    var compOf = {}, compSize = {}, cid = 0;
+    order.forEach(function (root) {
+      if (compOf[root] != null || state.closed[root]) return;
+      cid++; compSize[cid] = 0;
+      var q = [root]; compOf[root] = cid;
+      while (q.length) {
+        var u = q.pop(); compSize[cid]++;
+        G.STA_ADJ[u].forEach(function (v) {
+          if (members[v] && !state.closed[v] && compOf[v] == null) { compOf[v] = cid; q.push(v); }
+        });
+      }
+    });
+    var bigC = 0, bigN = 0;
+    Object.keys(compSize).forEach(function (k) { if (compSize[k] > bigN) { bigN = compSize[k]; bigC = +k; } });
+    order.forEach(function (si) {
+      if (!state.closed[si] && compOf[si] !== bigC) cutoff[si] = 1;
+    });
+  }
+
   // 역
   var maxD = 1;
   idxs.forEach(function (i) { if (NODES[i].d > maxD) maxD = NODES[i].d; });
@@ -660,15 +811,46 @@ function renderMap() {
     s.nodes.forEach(function (k) { var m = IMPACT[k]; if (m && (!im || m[0] > im[0])) im = m; });
     var sep = im && im[3] === 1;
     var r = 2.4 + Math.sqrt(s.demand / maxD) * 4.4;
+    var closed = !!state.closed[si];
     var c = document.createElementNS(NS, 'circle');
     c.setAttribute('cx', px(n).toFixed(1)); c.setAttribute('cy', py(n).toFixed(1));
-    c.setAttribute('r', r.toFixed(1));
-    c.setAttribute('fill', sep ? 'var(--risk-3)' : 'var(--surface)');
-    c.setAttribute('stroke', sep ? 'var(--risk-3)' : (s.transfer ? 'var(--ink-1)' : lineColor(n.l)));
-    c.setAttribute('stroke-width', s.transfer ? '2' : '1.4');
+    c.setAttribute('r', (closed ? Math.max(r, 5) : r).toFixed(1));
+    if (closed) {
+      c.setAttribute('fill', 'var(--ink-0)');
+      c.setAttribute('stroke', 'var(--risk-3)');
+      c.setAttribute('stroke-width', '2.4');
+    } else if (cutoff[si]) {
+      c.setAttribute('fill', 'var(--ink-5)');
+      c.setAttribute('stroke', 'var(--ink-4)');
+      c.setAttribute('stroke-width', '1.2');
+      c.setAttribute('opacity', '.75');
+    } else {
+      c.setAttribute('fill', sep ? 'var(--risk-3)' : 'var(--surface)');
+      c.setAttribute('stroke', sep ? 'var(--risk-3)' : (s.transfer ? 'var(--ink-1)' : lineColor(n.l)));
+      c.setAttribute('stroke-width', s.transfer ? '2' : '1.4');
+    }
     c.style.cursor = 'pointer';
-    c.addEventListener('click', function (ev) { ev.stopPropagation(); showMapTip(si, px(n), py(n)); });
+    c.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (state.simOn) {
+        if (state.closed[si]) delete state.closed[si]; else state.closed[si] = 1;
+        renderMap();
+      } else {
+        showMapTip(si, px(n), py(n));
+      }
+    });
     g.appendChild(c);
+    if (closed) {                              // 정지 표시 X
+      var xm = document.createElementNS(NS, 'path');
+      var cx = px(n), cy = py(n), rr = Math.max(r, 5) * 0.62;
+      xm.setAttribute('d', 'M' + (cx - rr) + ' ' + (cy - rr) + 'L' + (cx + rr) + ' ' + (cy + rr) +
+                           'M' + (cx + rr) + ' ' + (cy - rr) + 'L' + (cx - rr) + ' ' + (cy + rr));
+      xm.setAttribute('stroke', '#fff');
+      xm.setAttribute('stroke-width', '1.8');
+      xm.setAttribute('stroke-linecap', 'round');
+      xm.style.pointerEvents = 'none';
+      g.appendChild(xm);
+    }
   });
 
   host.appendChild(svg);
@@ -721,6 +903,39 @@ function renderMap() {
   $('#mapStat').innerHTML = '역 <b class="num">' + Object.keys(drawn).length + '</b>개 · ' +
     '단절 유발 구간 <b class="num">' + cuts + '</b>개' +
     '<span style="float:right;color:var(--ink-4)">© CARTO · OSM</span>';
+
+  renderSimBanner(cutoff, closedList);
+}
+
+/* 시뮬레이션 결과 배너 — 정지 집합이 망과 내 경로에 끼치는 영향 */
+function renderSimBanner(cutoff, closedList) {
+  var old = $('#simBanner');
+  if (old) old.remove();
+  if (!state.simOn) return;
+  var b = el('div', 'sim-banner');
+  b.id = 'simBanner';
+  if (!closedList.length) {
+    b.innerHTML = '지도에서 역을 눌러 <b>정지</b>시켜 보세요. 망이 어떻게 쪼개지고 내 경로가 어떻게 바뀌는지 즉시 계산합니다.';
+  } else {
+    var cutN = Object.keys(cutoff).length;
+    var t = '정지 <b>' + closedList.length + '</b>역';
+    t += cutN ? ' → 최대 성분에서 <b>' + cutN + '개 역</b>이 떨어져 나갑니다.' : ' — 망은 아직 쪼개지지 않았습니다.';
+    if (state.from != null && state.to != null && state.result && state.result.ok) {
+      var blocked = closedList.filter(function (si) { return si !== state.from && si !== state.to; });
+      var alt = G.shortest(state.from, state.to, blocked.length ? blocked : null);
+      var name2 = esc(STATIONS[state.from].name) + '→' + esc(STATIONS[state.to].name);
+      if (!alt) {
+        t += '<br>내 경로(' + name2 + '): <b>갈 수 없습니다.</b>';
+        b.classList.add('dead');
+      } else {
+        var d = alt.time - state.result.base.time;
+        t += '<br>내 경로(' + name2 + '): ' + (d > 30 ? '<b>+' + mins(d) + '분</b> 우회' : '영향 없음');
+      }
+    }
+    t += ' <button class="alt-link" style="display:inline;margin:0 0 0 8px" onclick="window._simReset()">초기화</button>';
+    b.innerHTML = t;
+  }
+  $('#map').insertAdjacentElement('afterend', b);
 }
 
 function showMapTip(si) { openStation(si); }
@@ -1054,11 +1269,24 @@ function initMapFilter() {
     b.setAttribute('aria-pressed', String(r === state.mapRegion));
     b.onclick = function () {
       state.mapRegion = r;
-      $$('.seg-btn', bar).forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+      $$('.seg-btn', bar).forEach(function (x) {
+        if (x !== simBtn) x.setAttribute('aria-pressed', String(x === b));
+      });
       renderMap();
     };
     bar.appendChild(b);
   });
+  // 시뮬레이션 모드 — 역을 눌러 정지시키고 망·경로 영향을 즉시 본다
+  var simBtn = el('button', 'seg-btn', '⚡ 시뮬레이션');
+  simBtn.style.marginLeft = 'auto';
+  simBtn.setAttribute('aria-pressed', 'false');
+  simBtn.onclick = function () {
+    state.simOn = !state.simOn;
+    simBtn.setAttribute('aria-pressed', String(state.simOn));
+    if (!state.simOn) state.closed = {};
+    renderMap();
+  };
+  bar.appendChild(simBtn);
 }
 
 /** ?from=판암&to=반석&tab=map 형태의 딥링크. 공유 링크와 동작 확인에 함께 쓴다. */

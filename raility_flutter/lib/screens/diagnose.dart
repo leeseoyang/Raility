@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../graph.dart';
@@ -110,7 +112,9 @@ class DiagnoseScreen extends StatelessWidget {
       sub += ' · 우회 불가 ${r.spof.length}개 + 30분 초과 우회 ${np - r.spof.length}개';
     }
     return [
-      const SizedBox(height: 14),
+      const SizedBox(height: 10),
+      _WaitChips(app: app),
+      const SizedBox(height: 10),
       Panel(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
         child: Column(children: [
@@ -173,21 +177,14 @@ class DiagnoseScreen extends StatelessWidget {
                 ..sort((a, b) => social(b).compareTo(social(a)));
               return Column(children: [
                 for (var i = 0; i < sorted.length && i < 6; i++)
-                  RowTile(
-                    divider: i > 0,
-                    rank: '${i + 1}',
-                    title: g.stations[sorted[i].station].name,
-                    subtitle: g.stations[sorted[i].station].lines.join(', ') +
-                        (sorted[i].spof ? ' · 우회 불가' : ' · 우회 +${mins(sorted[i].delta)}분'),
-                    value: comma(g.stations[sorted[i].station].demand),
-                    valueLabel: '일평균 승하차',
-                    onTap: () => showStationSheet(context, sorted[i].station),
-                  ),
+                  _PrepRow(rank: i + 1, st: sorted[i], r: r, divider: i > 0),
               ]);
             }(),
           ]),
         ),
       ],
+      const SizedBox(height: 18),
+      _AdvFold(r: r),
       Note('역 ${g.stations.length}개, 구간 ${g.edges.length}개 그래프에서 '
           '경로 위의 역을 하나씩 제거하고 다시 탐색해 산출했습니다.'),
     ];
@@ -237,6 +234,251 @@ class DiagnoseScreen extends StatelessWidget {
       );
 
   Widget _divider(InkPalette ink) => Container(width: 1, color: ink.line, margin: const EdgeInsets.only(left: 14, right: 14));
+}
+
+/// 배차 시간대 칩 — 첨두엔 우회 가능해도 한산 시간엔 사실상 단절인 경로가 있다
+class _WaitChips extends StatelessWidget {
+  final AppState app;
+  const _WaitChips({required this.app});
+
+  static const _modes = [('peak', '첨두 배차'), ('avg', '평균 배차'), ('quiet', '한산 배차')];
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Palette.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(children: [
+        for (final (mode, label) in _modes) ...[
+          InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () {
+              if (app.graph.setWaitMode(mode)) app.rediagnose();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+              decoration: BoxDecoration(
+                color: app.graph.waitMode == mode ? ink.tint : ink.surface2,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(label,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: app.graph.waitMode == mode ? FontWeight.w600 : FontWeight.w500,
+                      color: app.graph.waitMode == mode ? Colors.white : ink.i2)),
+            ),
+          ),
+          const SizedBox(width: 7),
+        ],
+      ]),
+    );
+  }
+}
+
+/// 대비역 행 — 탭하면 "그래서 어떻게 가야 하나"(대체 경로 요약)를 펼친다
+class _PrepRow extends StatefulWidget {
+  final int rank;
+  final Stop st;
+  final Diagnosis r;
+  final bool divider;
+  const _PrepRow({required this.rank, required this.st, required this.r, required this.divider});
+
+  @override
+  State<_PrepRow> createState() => _PrepRowState();
+}
+
+class _PrepRowState extends State<_PrepRow> {
+  bool _open = false;
+
+  String? _nearestWalkable(RailGraph g, int si) {
+    final s = g.stations[si];
+    String? best;
+    var bestD = 500.0;
+    for (final t in g.stations) {
+      if (t.index == si) continue;
+      if (t.lines.any(s.lines.contains)) continue;
+      final d = math.sqrt(math.pow((s.lat - t.lat) * 111000, 2) +
+          math.pow((s.lon - t.lon) * 88000, 2));
+      if (d <= bestD) {
+        bestD = d;
+        best = '${t.name}까지 도보 약 ${d.round()}m';
+      }
+    }
+    return best;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Palette.of(context);
+    final g = AppScope.of(context).graph;
+    final st = widget.st, r = widget.r;
+    final s = g.stations[st.station];
+
+    return Column(children: [
+      RowTile(
+        divider: widget.divider,
+        rank: '${widget.rank}',
+        title: s.name,
+        subtitle: s.lines.join(', ') +
+            (st.spof ? ' · 우회 불가' : ' · 우회 +${mins(st.delta)}분'),
+        value: comma(s.demand),
+        valueLabel: '일평균 승하차',
+        onTap: () => setState(() => _open = !_open),
+      ),
+      if (_open)
+        Container(
+          margin: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.fromLTRB(0, 10, 16, 12),
+          decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: ink.line, width: 0.5))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            () {
+              final alt = st.spof
+                  ? null
+                  : g.shortest(r.stops.first.station, r.stops.last.station,
+                      block: [st.station]);
+              if (alt == null) {
+                final walk = _nearestWalkable(g, st.station);
+                return Text(
+                    '이 역이 멈추면 이 경로로는 갈 수 없습니다. '
+                    '${walk != null ? '인근 대체: $walk.' : '500m 안에 다른 노선 역도 없습니다.'}',
+                    style: TextStyle(fontSize: 13, color: ink.i2, height: 1.5));
+              }
+              final lines = <String>[];
+              for (final x in g.toStops(alt.path)) {
+                final l = x.rideLine;
+                if (l != null && !lines.contains(l)) lines.add(l);
+              }
+              return Text(
+                  '우회 경로: ${lines.join(' → ')} · +${mins(alt.time - r.base!.time)}분 '
+                  '(${mins(alt.time)}분 소요)',
+                  style: TextStyle(fontSize: 13, color: ink.i2, height: 1.5));
+            }(),
+            const SizedBox(height: 7),
+            InkWell(
+              onTap: () => showStationSheet(context, st.station),
+              child: Text('역 정보 보기',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: ink.tint)),
+            ),
+          ]),
+        ),
+    ]);
+  }
+}
+
+/// 고급 진단 접이 카드 — 구간 사고·연속 폐쇄·이중 고장 (요청 시 계산)
+class _AdvFold extends StatefulWidget {
+  final Diagnosis r;
+  const _AdvFold({required this.r});
+
+  @override
+  State<_AdvFold> createState() => _AdvFoldState();
+}
+
+class _AdvFoldState extends State<_AdvFold> {
+  bool _open = false;
+  AdvancedResult? _adv;
+  bool _computing = false;
+
+  Future<void> _compute() async {
+    final g = AppScope.of(context).graph;      // async 갭 전에 확보
+    setState(() => _computing = true);
+    await Future.delayed(const Duration(milliseconds: 30));   // 스피너 프레임 먼저
+    final adv = g.advancedDiagnose(widget.r);
+    if (mounted) setState(() { _adv = adv; _computing = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = Palette.of(context);
+    final g = AppScope.of(context).graph;
+
+    Widget item(String title, String sub) => Container(
+          margin: const EdgeInsets.only(left: 16),
+          padding: const EdgeInsets.fromLTRB(0, 10, 16, 10),
+          decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: ink.line, width: 0.5))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: ink.i0)),
+            const SizedBox(height: 2),
+            Text(sub, style: TextStyle(fontSize: 12.5, color: ink.i3, height: 1.5)),
+          ]),
+        );
+
+    return Panel(
+      child: Column(children: [
+        InkWell(
+          onTap: () {
+            setState(() => _open = !_open);
+            if (_open && _adv == null && !_computing) _compute();
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+            child: Row(children: [
+              Container(
+                width: 28, height: 28,
+                decoration: BoxDecoration(color: ink.tint, borderRadius: BorderRadius.circular(7)),
+                child: const Icon(Icons.layers_outlined, size: 17, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text('고급 진단 — 구간 사고·연속 폐쇄·이중 고장',
+                    style: TextStyle(fontSize: 14.5, color: ink.i1, letterSpacing: -0.15)),
+              ),
+              AnimatedRotation(
+                turns: _open ? 0.25 : 0,
+                duration: const Duration(milliseconds: 160),
+                child: Icon(Icons.chevron_right, size: 19, color: ink.i4),
+              ),
+            ]),
+          ),
+        ),
+        if (_open && _computing)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+            child: Row(children: [
+              SizedBox(width: 14, height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: ink.tint)),
+              const SizedBox(width: 9),
+              Text('수백 가지 고장 조합을 탐색하는 중…',
+                  style: TextStyle(fontSize: 12.5, color: ink.i3)),
+            ]),
+          ),
+        if (_open && _adv != null) ...[
+          () {
+            final adv = _adv!;
+            final dead = adv.cuts.where((c) => c.$3).toList();
+            return item('구간 사고 (선로 단절)',
+                dead.isNotEmpty
+                    ? '경로 구간 ${widget.r.stops.length - 1}개 중 ${dead.length}개는 끊기면 우회가 없습니다 — '
+                      '${dead.take(2).map((c) => '${g.stations[c.$1].name}↔${g.stations[c.$2].name}').join(', ')}'
+                      '${dead.length > 2 ? ' 외' : ''}'
+                    : '어느 한 구간이 끊겨도 실질적 우회가 존재합니다');
+          }(),
+          item('연속 폐쇄 (2~4역 동시)',
+              _adv!.windows.isNotEmpty
+                  ? '같은 노선 ${_adv!.windows.first.$1.length}개 역 연속 폐쇄 조합 ${_adv!.windows.length}개가 '
+                    '경로를 사실상 끊습니다 — 예: '
+                    '${_adv!.windows.first.$1.map((si) => g.stations[si].name).join('·')}'
+                  : '단독 생존 구간은 4역 연속 폐쇄에도 실질 단절이 없습니다'),
+          item('이중 고장 (k=2)',
+              _adv!.pairCandidates < 2
+                  ? '단독 생존 중간역이 2개 미만이라 해당 없음'
+                  : _adv!.pairs.isNotEmpty
+                      ? '단독으론 버티는 역 ${_adv!.pairCandidates}개 중 ${_adv!.pairs.length}쌍은 함께 멈추면 '
+                        '경로가 사라집니다 — 예: ${g.stations[_adv!.pairs.first.$1].name} + '
+                        '${g.stations[_adv!.pairs.first.$2].name}'
+                      : '단독 생존 역 ${_adv!.pairCandidates}개는 어떤 두 개가 함께 멈춰도 경로가 남습니다'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Text(
+                '실제 운행중단 공지는 역이 아니라 "A역–B역 구간" 형식입니다. 이 진단은 그 형식과 같은 단위로 계산합니다.',
+                style: TextStyle(fontSize: 12.5, color: ink.i3, height: 1.5)),
+          ),
+        ],
+      ]),
+    );
+  }
 }
 
 /// 교통약자 요약 접이 카드 — 한 줄 요약, 탭하면 장벽별 상세

@@ -296,7 +296,7 @@ class _TabBar extends StatelessWidget {
   static const _items = [
     (Icons.monitor_heart_outlined, Icons.monitor_heart, '진단'),
     (Icons.map_outlined, Icons.map, '지도'),
-    (Icons.tram_outlined, Icons.tram, '대전'),
+    (Icons.bar_chart_outlined, Icons.bar_chart, '권역'),
     (Icons.storage_outlined, Icons.storage, '데이터'),
   ];
 

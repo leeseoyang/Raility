@@ -354,6 +354,35 @@ void main() {
       expect(r.spof.length, r.mids.length);
       expect(r.grade, 'E');
     });
+    test('배차 모드 단조성 (첨두 ≤ 평균 ≤ 한산) 후 복원', () {
+      final a = g.lookup('소사', '수도권')!, b = g.lookup('강남', '수도권')!;
+      final tAvg = g.diagnose(a, b).base!.time;
+      g.setWaitMode('peak');
+      final tPeak = g.diagnose(a, b).base!.time;
+      g.setWaitMode('quiet');
+      final tQuiet = g.diagnose(a, b).base!.time;
+      g.setWaitMode('avg');
+      expect(tPeak, lessThanOrEqualTo(tAvg));
+      expect(tAvg, lessThanOrEqualTo(tQuiet));
+      expect(g.diagnose(a, b).base!.time, tAvg);
+    });
+    test('고급 진단: 대전 전 구간 단절, 수도권 A급 무단절', () {
+      final dj = g.diagnose(g.lookup('판암', '대전')!, g.lookup('반석', '대전')!);
+      final advD = g.advancedDiagnose(dj)!;
+      expect(advD.cuts.where((c) => c.$3).length, dj.stops.length - 1);
+      expect(advD.pairCandidates, 0);
+      final m = g.diagnose(g.lookup('소사', '수도권')!, g.lookup('강남', '수도권')!);
+      final advM = g.advancedDiagnose(m)!;
+      expect(advM.cuts.where((c) => c.$3), isEmpty);
+    });
+    test('구간 차단 탐색: 경로 구간을 끊으면 시간이 늘거나 같다', () {
+      final a = g.lookup('소사', '수도권')!, b = g.lookup('강남', '수도권')!;
+      final m = g.diagnose(a, b);
+      final alt = g.shortest(a, b,
+          blockSegA: m.stops[1].station, blockSegB: m.stops[2].station);
+      expect(alt, isNotNull);
+      expect(alt!.time, greaterThanOrEqualTo(m.base!.time));
+    });
     test('accOf 는 자료 없음과 장벽 없음을 구분', () {
       final none = g.nodes.indexWhere((n) => n.ac == null);
       expect(g.accOf([none]), isNull);              // 자료 없음 → null

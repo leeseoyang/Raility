@@ -98,6 +98,15 @@ class RegionFragility {
   const RegionFragility(this.region, this.total, this.cuts, this.ratio, this.stations);
 }
 
+/// 고급 진단 결과 (웹판 advanced() 와 동일한 규칙)
+class AdvancedResult {
+  final List<(int, int, bool)> cuts;      // (역A, 역B, 완전 단절 여부)
+  final List<(List<int>, bool)> windows;  // (연속 폐쇄 역들, 완전 단절 여부)
+  final List<(int, int)> pairs;           // 함께 멈추면 경로가 사라지는 쌍
+  final int pairCandidates;
+  const AdvancedResult(this.cuts, this.windows, this.pairs, this.pairCandidates);
+}
+
 /// 빠른환승 한 건 — 내리는 열차의 몇 번째 칸(car)·문(door)이 환승 통로와 가장 가까운가
 class FastTransfer {
   final String dir; // 탄 열차의 종착 방면
@@ -163,7 +172,7 @@ class _MinHeap {
 class RailGraph {
   late final List<NodeInfo> nodes;
   late final List<List<int>> edges;          // [a, b, type, sec, dist, freq]
-  late final List<List<GEdge>> adj;
+  late List<List<GEdge>> adj;                // waitMode 변경 시 재구성되므로 final 아님
   late final List<Station> stations;
   late final Int32List staOf;
   late final List<List<int>> staAdj;
@@ -177,6 +186,12 @@ class RailGraph {
 
   /// 노선 -> 기대 대기시간(초). 운행횟수에서 역산한 배차간격의 절반.
   late final Map<String, int> lineWait;
+
+  /// 분석 파이프라인 산출물(수도권 기준): 복원력·환승역 마비 등.
+  late final Map<String, dynamic> summary;
+
+  /// 최우선 대비역 [nodeIdx, 구분, 효율저하, 분리규모]
+  late final List<List<dynamic>> prio;
 
   // 다익스트라 작업 버퍼 (재할당 비용 회피)
   late final Float64List _dist;
@@ -228,6 +243,11 @@ class RailGraph {
       lineWait[k as String] = (v as num).toInt();
     });
 
+    summary = (j['summary'] as Map?)?.map((k, v) => MapEntry(k as String, v)) ?? {};
+    prio = ((j['prio'] as List?) ?? [])
+        .map((r) => (r as List).toList())
+        .toList();
+
     _buildAdjacency();
     _buildStations();
     _buildStationAdjacency();
@@ -240,10 +260,25 @@ class RailGraph {
   static RailGraph parse(String jsonText) =>
       RailGraph.fromJson(json.decode(jsonText) as Map<String, dynamic>);
 
+  /// 시간대 3단 배차 가중. 첨두 집중률 35% 표준 가정 — 웹판 WAIT_FACTOR 와 동일.
+  static const waitFactor = {'peak': 0.60, 'avg': 1.0, 'quiet': 1.21};
+  String _waitMode = 'avg';
+  String get waitMode => _waitMode;
+
+  /// 대기 모드를 바꾸면 인접 리스트를 다시 만든다. 바뀌었으면 true.
+  bool setWaitMode(String mode) {
+    if (!waitFactor.containsKey(mode) || mode == _waitMode) return false;
+    _waitMode = mode;
+    _buildAdjacency();
+    return true;
+  }
+
   void _buildAdjacency() {
     // 배차간격 반영: 환승(1)·도보(2) 엣지로 노선 ℓ에 '올라탈' 때 그 노선의
     // 기대 대기시간을 얹는다. 방향에 따라 도착 노선이 달라 가중치가 방향 의존.
-    int boardWait(int nodeIdx) => lineWait[nodes[nodeIdx].line] ?? 0;
+    final f = waitFactor[_waitMode]!;
+    int boardWait(int nodeIdx) =>
+        ((lineWait[nodes[nodeIdx].line] ?? 0) * f).round();
     adj = List.generate(nodes.length, (_) => <GEdge>[]);
     for (var ei = 0; ei < edges.length; ei++) {
       final e = edges[ei];
@@ -409,7 +444,9 @@ class RailGraph {
   }
 
   /// 역 [src] → 역 [dst] 최단경로. [block] 에 든 역은 통과 불가.
-  PathResult? shortest(int src, int dst, {List<int>? block}) {
+  /// [blockSegA]/[blockSegB]: 두 역 사이 구간(엣지)만 끊는다 — 선로 사고 모사.
+  PathResult? shortest(int src, int dst,
+      {List<int>? block, int blockSegA = -1, int blockSegB = -1}) {
     if (src == dst) return PathResult(0, [stations[src].nodes.first]);
 
     for (var i = 0; i < nodes.length; i++) {
@@ -425,6 +462,8 @@ class RailGraph {
         _blocked[b] = 1;
       }
     }
+    final segA = blockSegA < blockSegB ? blockSegA : blockSegB;
+    final segB = blockSegA < blockSegB ? blockSegB : blockSegA;
 
     final h = _MinHeap();
     for (final i in stations[src].nodes) {
@@ -444,6 +483,11 @@ class RailGraph {
       }
       for (final e in adj[u]) {
         if (hasBlock && _blocked[staOf[e.to]] == 1) continue;
+        if (segA >= 0) {
+          final su = staOf[u], sv = staOf[e.to];
+          final lo = su < sv ? su : sv, hi = su < sv ? sv : su;
+          if (lo == segA && hi == segB) continue;
+        }
         final nd = d + e.weight;
         if (nd < _dist[e.to]) {
           _dist[e.to] = nd;
@@ -594,6 +638,54 @@ class RailGraph {
       transfers: stops.where((s) => s.transferHere).length,
       lines: lines,
     );
+  }
+
+  /// 고급 진단 — 구간 사고·연속 폐쇄·이중 고장. 수백 회 재탐색이므로 요청 시에만.
+  /// (판정 규칙은 웹판 graph.js advanced() 와 동일해야 한다)
+  AdvancedResult? advancedDiagnose(Diagnosis r) {
+    if (!r.ok) return null;
+    final src = r.stops.first.station, dst = r.stops.last.station;
+    final base = r.base!.time;
+
+    final cuts = <(int, int, bool)>[];
+    for (var k = 0; k + 1 < r.stops.length; k++) {
+      final a = r.stops[k], b = r.stops[k + 1];
+      if (a.walkHere) continue;               // 도보 구간은 선로 사고 대상이 아니다
+      final alt = shortest(src, dst, blockSegA: a.station, blockSegB: b.station);
+      if (alt == null) {
+        cuts.add((a.station, b.station, true));
+      } else if (alt.time - base > practicalCapS) {
+        cuts.add((a.station, b.station, false));
+      }
+    }
+
+    final windows = <(List<int>, bool)>[];
+    for (var w = 2; w <= 4 && windows.isEmpty; w++) {
+      for (var s0 = 0; s0 + w <= r.mids.length; s0++) {
+        final seg = r.mids.sublist(s0, s0 + w);
+        if (seg.any((st) => st.practical)) continue;   // 단독으로 이미 단절
+        final line = seg.first.rideLine;
+        if (!seg.every((st) => st.rideLine == line)) continue;
+        final alt = shortest(src, dst, block: seg.map((st) => st.station).toList());
+        if (alt == null || alt.time - base > practicalCapS) {
+          windows.add((seg.map((st) => st.station).toList(), alt == null));
+        }
+      }
+    }
+
+    var solo = r.mids.where((st) => !st.practical).toList();
+    if (solo.length > 30) {
+      solo = ([...solo]..sort((a, b) => b.delta.compareTo(a.delta))).sublist(0, 30);
+    }
+    final pairs = <(int, int)>[];
+    for (var x = 0; x < solo.length; x++) {
+      for (var y = x + 1; y < solo.length; y++) {
+        if (shortest(src, dst, block: [solo[x].station, solo[y].station]) == null) {
+          pairs.add((solo[x].station, solo[y].station));
+        }
+      }
+    }
+    return AdvancedResult(cuts, windows, pairs, solo.length);
   }
 
   /// 절점(articulation point): 제거하면 그래프가 분리되는 정점. Tarjan 반복 구현.

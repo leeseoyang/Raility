@@ -14,14 +14,32 @@ var ADJ = NODES.map(function () { return []; });
 // 배차간격 반영: 환승(type 1)·도보(type 2) 엣지로 노선 ℓ에 '올라탈' 때
 // 그 노선의 기대 대기시간(NET.lineWait[ℓ] = 편도 headway/2)을 얹는다.
 // 방향에 따라 도착 노선이 다르므로 가중치가 방향 의존이 된다.
+//
+// 시간대 3단: 전일 평균 운행횟수만 공개되어 있어, 첨두 집중률 35%(운행시간
+// 1140분 중 첨두 240분에 열차 35%가 몰린다는 표준 가정)로 환산한다.
+//   첨두 대기 ≈ 평균 × 0.60 · 한산 대기 ≈ 평균 × 1.21
 var LINE_WAIT = NET.lineWait || {};
-function boardWait(nodeIdx) { return LINE_WAIT[NODES[nodeIdx].l] || 0; }
-EDGES.forEach(function (e, ei) {
-  var wa = e[3], wb = e[3];
-  if (e[2] !== 0) { wa += boardWait(e[1]); wb += boardWait(e[0]); }
-  ADJ[e[0]].push({ to: e[1], w: wa, type: e[2], ei: ei });
-  ADJ[e[1]].push({ to: e[0], w: wb, type: e[2], ei: ei });
-});
+var WAIT_FACTOR = { peak: 0.60, avg: 1.0, quiet: 1.21 };
+var waitMode = 'avg';
+function boardWait(nodeIdx) {
+  return Math.round((LINE_WAIT[NODES[nodeIdx].l] || 0) * WAIT_FACTOR[waitMode]);
+}
+function buildAdj() {
+  for (var i = 0; i < ADJ.length; i++) ADJ[i].length = 0;
+  EDGES.forEach(function (e, ei) {
+    var wa = e[3], wb = e[3];
+    if (e[2] !== 0) { wa += boardWait(e[1]); wb += boardWait(e[0]); }
+    ADJ[e[0]].push({ to: e[1], w: wa, type: e[2], ei: ei });
+    ADJ[e[1]].push({ to: e[0], w: wb, type: e[2], ei: ei });
+  });
+}
+buildAdj();
+function setWaitMode(mode) {
+  if (!WAIT_FACTOR[mode] || mode === waitMode) return false;
+  waitMode = mode;
+  buildAdj();
+  return true;
+}
 
 // 같은 역사명 + 같은 권역 = 하나의 "역".
 // 승강장 노드가 노선별로 쪼개져 있어, 실제로 "역이 멈춘다"를 모사하려면 묶어서 통째로 제거해야 한다.
@@ -143,7 +161,8 @@ var _prev = new Int32Array(NODES.length);
 var _blocked = new Uint8Array(STATIONS.length);
 
 /** 역 srcSta → 역 dstSta 최단경로. blockSta(역 인덱스 또는 배열)는 통과 불가. */
-function shortest(srcSta, dstSta, blockSta) {
+function shortest(srcSta, dstSta, blockSta, blockSeg) {
+  // blockSeg: {a, b} — 두 역 사이 구간(엣지)만 끊는다. 선로 사고·구간 공사 모사용.
   if (srcSta === dstSta) return { time: 0, path: [STATIONS[srcSta].nodes[0]] };
 
   var i, n = NODES.length;
@@ -158,6 +177,8 @@ function shortest(srcSta, dstSta, blockSta) {
       _blocked[arr[i]] = 1;
     }
   }
+  var segA = blockSeg ? Math.min(blockSeg.a, blockSeg.b) : -1;
+  var segB = blockSeg ? Math.max(blockSeg.a, blockSeg.b) : -1;
 
   var h = new MinHeap();
   STATIONS[srcSta].nodes.forEach(function (i) { _dist[i] = 0; h.push(0, i); });
@@ -175,6 +196,10 @@ function shortest(srcSta, dstSta, blockSta) {
     for (var k = 0; k < lst.length; k++) {
       var e = lst[k], v = e.to;
       if (hasBlock && _blocked[STA_OF[v]]) continue;
+      if (segA >= 0) {
+        var su = STA_OF[u], sv = STA_OF[v];
+        if (Math.min(su, sv) === segA && Math.max(su, sv) === segB) continue;
+      }
       var nd = d + e.w;
       if (nd < _dist[v]) { _dist[v] = nd; _prev[v] = u; h.push(nd, v); }
     }
@@ -368,6 +393,53 @@ function regionFragility(region) {
            ratio: arts.length / members.length, stations: arts };
 }
 
+/** 고급 진단 — 실제 사고 양상(구간·연속·복수 고장)으로 확장한 시나리오.
+ *  수백 회 재탐색이 필요하므로 요청 시에만 호출한다(수백 ms~수 초).
+ *   1) 구간 단절: 경로의 인접 정차 구간을 하나씩 끊는다 (운행중단 공지의 기본 형식)
+ *   2) 연속 폐쇄: 같은 노선의 인접 2~4개 중간역 동시 폐쇄 — 치명 폭이 가장 좁은 것만 보고
+ *   3) k=2 동시 고장: 단독으론 버티는 중간역 쌍이 함께 멈추면 끊기는 조합 */
+function advanced(r) {
+  if (!r || !r.ok) return null;
+  var src = r.stops[0].sta, dst = r.stops[r.stops.length - 1].sta;
+  var base = r.base.time;
+
+  var cuts = [];
+  for (var k = 0; k + 1 < r.stops.length; k++) {
+    var a = r.stops[k], b = r.stops[k + 1];
+    if (a.walkHere) continue;                        // 도보 구간은 선로 사고 대상이 아니다
+    var alt = shortest(src, dst, null, { a: a.sta, b: b.sta });
+    if (!alt) cuts.push({ a: a.sta, b: b.sta, dead: true });
+    else if (alt.time - base > PRACTICAL_CAP_S) cuts.push({ a: a.sta, b: b.sta, dead: false, delta: alt.time - base });
+  }
+
+  var windows = [], mids = r.mids;
+  for (var w = 2; w <= 4 && !windows.length; w++) {
+    for (var s0 = 0; s0 + w <= mids.length; s0++) {
+      var seg = mids.slice(s0, s0 + w);
+      if (seg.some(function (st) { return st.practical; })) continue;   // 단독으로 이미 단절
+      var line = seg[0].rideLine;
+      if (!seg.every(function (st) { return st.rideLine === line; })) continue;
+      var alt2 = shortest(src, dst, seg.map(function (st) { return st.sta; }));
+      if (!alt2 || alt2.time - base > PRACTICAL_CAP_S) {
+        windows.push({ stas: seg.map(function (st) { return st.sta; }), w: w, dead: !alt2 });
+      }
+    }
+  }
+
+  var solo = mids.filter(function (st) { return !st.practical; });
+  if (solo.length > 30) {
+    solo = solo.slice().sort(function (x, y) { return (y.delta || 0) - (x.delta || 0); }).slice(0, 30);
+  }
+  var pairs = [];
+  for (var x = 0; x < solo.length; x++) {
+    for (var y = x + 1; y < solo.length; y++) {
+      var alt3 = shortest(src, dst, [solo[x].sta, solo[y].sta]);
+      if (!alt3) pairs.push([solo[x].sta, solo[y].sta]);
+    }
+  }
+  return { cuts: cuts, windows: windows, pairs: pairs, pairCandidates: solo.length };
+}
+
 /* ── 빠른환승 (국토교통부 차량순서·출입문) ─────────────────────
  * NET.ft: { "권역|역명": [[탈때노선 후보, 갈아탈노선 후보, 종착방면, 칸, 문], ...] }
  * 같은 환승쌍에 상·하행 두 레코드가 있으므로 진행 방향을 판정해야 한다.
@@ -459,7 +531,9 @@ root.RailGraph = {
   STA_ADJ: STA_ADJ, articulationPoints: articulationPoints, regionFragility: regionFragility,
   NODES: NODES, EDGES: EDGES, ADJ: ADJ,
   STATIONS: STATIONS, STA_OF: STA_OF, PRACTICAL_CAP_S: PRACTICAL_CAP_S,
-  shortest: shortest, toStops: toStops, diagnose: diagnose, fastTransferAt: fastTransferAt
+  shortest: shortest, toStops: toStops, diagnose: diagnose, fastTransferAt: fastTransferAt,
+  advanced: advanced, setWaitMode: setWaitMode,
+  getWaitMode: function () { return waitMode; }
 };
 
 })(typeof window !== 'undefined' ? window : globalThis);

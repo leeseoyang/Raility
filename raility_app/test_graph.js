@@ -325,5 +325,34 @@ var dj2 = G.diagnose(find('판암', '대전'), find('반석', '대전'));
 ok('대전 전 구간 여전히 전부 SPOF', dj2.spof.length === dj2.mids.length && dj2.grade === 'E',
    dj2.spof.length + '/' + dj2.mids.length + ' ' + dj2.grade);
 
+/* ── 14. 대기 모드 · 고급 진단 ─────────────────────── */
+hdr('대기 모드 · 고급 진단');
+function mins(sec) { return Math.round(sec / 60); }
+var sosaI = find('소사', '수도권'), gnI = find('강남', '수도권');
+var tAvg = G.diagnose(sosaI, gnI).base.time;
+G.setWaitMode('peak');
+var tPeak = G.diagnose(sosaI, gnI).base.time;
+G.setWaitMode('quiet');
+var tQuiet = G.diagnose(sosaI, gnI).base.time;
+G.setWaitMode('avg');
+ok('배차 모드 단조성 (첨두 ≤ 평균 ≤ 한산)', tPeak <= tAvg && tAvg <= tQuiet,
+   mins(tPeak) + '/' + mins(tAvg) + '/' + mins(tQuiet) + '분');
+ok('모드 복원 후 평균과 일치', G.diagnose(sosaI, gnI).base.time === tAvg);
+
+var djA = G.diagnose(find('판암', '대전'), find('반석', '대전'));
+var advD = G.advanced(djA);
+ok('대전 고급: 전 구간 단절 (경로 그래프)',
+   advD.cuts.filter(function (c) { return c.dead; }).length === djA.stops.length - 1,
+   advD.cuts.length + '/' + (djA.stops.length - 1));
+ok('대전 고급: 이중 고장 후보 없음 (전 역이 이미 단독 단절)', advD.pairCandidates === 0);
+var mA = G.diagnose(sosaI, gnI);
+var advM = G.advanced(mA);
+ok('수도권 A급 경로: 구간 완전 단절 없음',
+   advM.cuts.filter(function (c) { return c.dead; }).length === 0);
+// 구간 차단 탐색 자체 검증: 경로 위 한 구간을 끊으면 시간이 늘거나 같아야 한다
+var segAlt = G.shortest(sosaI, gnI, null, { a: mA.stops[1].sta, b: mA.stops[2].sta });
+ok('구간 차단 시 소요시간 증가', segAlt && segAlt.time >= mA.base.time,
+   segAlt ? '+' + mins(segAlt.time - mA.base.time) + '분' : '경로 소멸');
+
 console.log('\n' + (fail === 0 ? '전부 통과' : fail + '건 실패') + '  (통과 ' + pass + ' / 실패 ' + fail + ')');
 process.exit(fail ? 1 : 0);
